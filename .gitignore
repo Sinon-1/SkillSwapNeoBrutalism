@@ -1,0 +1,15 @@
+# secrets - never commit
+.env
+config.properties
+# build output
+target/
+dist/
+out/
+*.class
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/

@@ -1,0 +1,36 @@
+-- SkillSwap Campus schema (the app also creates all of this automatically on first connect).
+-- CREATE DATABASE skillswap;
+
+CREATE SEQUENCE IF NOT EXISTS ss_id_seq;
+
+CREATE TABLE IF NOT EXISTS users(ord BIGSERIAL, username TEXT PRIMARY KEY, real_name TEXT NOT NULL DEFAULT '', email TEXT NOT NULL UNIQUE,;
+
+ pass_hash TEXT NOT NULL, bio TEXT NOT NULL DEFAULT '', use_real_name BOOLEAN NOT NULL DEFAULT FALSE, public_ratings BOOLEAN NOT NULL DEFAULT TRUE,;
+
+ nearby BOOLEAN NOT NULL DEFAULT FALSE, demo BOOLEAN NOT NULL DEFAULT FALSE, credits INT NOT NULL DEFAULT 5);
+
+CREATE TABLE IF NOT EXISTS user_skills(ord BIGSERIAL, username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,;
+
+ kind CHAR(1) NOT NULL, skill TEXT NOT NULL, PRIMARY KEY(username, kind, skill));
+
+CREATE TABLE IF NOT EXISTS posts(id INT PRIMARY KEY, author TEXT NOT NULL, post_type TEXT NOT NULL, skill TEXT NOT NULL,;
+
+ category TEXT NOT NULL, descr TEXT NOT NULL, created BIGINT NOT NULL);
+
+CREATE TABLE IF NOT EXISTS post_likes(post_id INT NOT NULL REFERENCES posts(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(post_id, username));
+
+CREATE TABLE IF NOT EXISTS post_videos(post_id INT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE, file_name TEXT NOT NULL, size_bytes BIGINT NOT NULL, data BYTEA NOT NULL);
+
+CREATE TABLE IF NOT EXISTS sessions(id INT PRIMARY KEY, teacher TEXT NOT NULL, learner TEXT NOT NULL, skill TEXT NOT NULL, sess_mode TEXT NOT NULL,;
+
+ status TEXT NOT NULL, requester TEXT NOT NULL, review TEXT NOT NULL DEFAULT '', rating INT NOT NULL DEFAULT 0, starts_at TIMESTAMP NOT NULL);
+
+CREATE TABLE IF NOT EXISTS messages(id INT PRIMARY KEY, from_user TEXT NOT NULL, to_user TEXT NOT NULL, body TEXT NOT NULL, created BIGINT NOT NULL);
+
+CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(from_user, to_user, created);
+
+CREATE TABLE IF NOT EXISTS reports(id INT PRIMARY KEY, by_user TEXT NOT NULL, target TEXT NOT NULL, reason TEXT NOT NULL,;
+
+ details TEXT NOT NULL DEFAULT '', created BIGINT NOT NULL);
+
+CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT NOT NULL);
