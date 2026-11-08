@@ -124,6 +124,43 @@ public class Videos {
     }
     public static void fxStop(JComponent c) { try { Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("stop", JComponent.class).invoke(null, c); } catch (Throwable t) { } }
 
+
+    // ---- thumbnails: a real frame from the video, generated once and cached in ~/.skillswap/cache ----
+    static final long THUMB_AUTO_MAX = 25L * 1024 * 1024;          // bigger videos only get a preview after they were opened once
+    static final Map<Integer, BufferedImage> thumbs = new ConcurrentHashMap<>();
+    static final Set<Integer> thumbBusy = ConcurrentHashMap.newKeySet(), thumbFailed = ConcurrentHashMap.newKeySet();
+    static final ExecutorService thumbPool = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "video-thumb"); t.setDaemon(true); return t; });
+    static Path videoCacheFile(Post po) { return DIR.resolve("cache").resolve("video_" + po.id + "_" + po.videoName.replaceAll("[^A-Za-z0-9._-]", "_")); }
+    static boolean videoCached(Post po) { try { Path f = videoCacheFile(po); return Files.exists(f) && Files.size(f) == po.videoSize; } catch (IOException e) { return false; } }
+    /** Loads (or creates) the preview image for a video post, then runs done on the EDT. Returns immediately. */
+    public static void thumbnail(Post po, Runnable done) {
+        final int id = po.id; if (thumbs.containsKey(id) || thumbFailed.contains(id) || !thumbBusy.add(id)) return;
+        final Path png = DIR.resolve("cache").resolve("thumb_" + id + "_" + po.videoSize + ".png");
+        thumbPool.submit(() -> {
+            try { if (Files.exists(png)) { BufferedImage im = javax.imageio.ImageIO.read(png.toFile()); if (im != null) { thumbs.put(id, im); thumbBusy.remove(id); SwingUtilities.invokeLater(done); return; } } } catch (Exception e) { /* regenerate */ }
+            if (!videoCached(po) && po.videoSize > THUMB_AUTO_MAX) { thumbBusy.remove(id); return; }
+            SwingUtilities.invokeLater(() -> withVideo(po, file -> thumbPool.submit(() -> {
+                BufferedImage im = grabFrame(file);
+                if (im == null) thumbFailed.add(id);
+                else { thumbs.put(id, im); try { Files.createDirectories(png.getParent()); javax.imageio.ImageIO.write(im, "png", png.toFile()); } catch (Exception e) { /* cache only */ } }
+                thumbBusy.remove(id); if (im != null) SwingUtilities.invokeLater(done);
+            }), err -> { thumbBusy.remove(id); thumbFailed.add(id); }));
+        });
+    }
+    /** First usable frame of a video: tries ffmpeg (any format) if installed, then the JavaFX player if present. */
+    static BufferedImage grabFrame(File video) {
+        for (String seek : new String[]{"0.5", "0"}) {
+            try {
+                File tmp = File.createTempFile("ssthumb", ".png"); tmp.delete();
+                Process pr = new ProcessBuilder("ffmpeg", "-v", "error", "-y", "-ss", seek, "-i", video.getAbsolutePath(), "-frames:v", "1", "-vf", "scale='min(640,iw)':-2", tmp.getAbsolutePath()).redirectErrorStream(true).start();
+                pr.getInputStream().readAllBytes();
+                if (!pr.waitFor(20, TimeUnit.SECONDS)) pr.destroyForcibly();
+                if (tmp.exists()) { BufferedImage im = javax.imageio.ImageIO.read(tmp); tmp.delete(); if (im != null) return im; }
+            } catch (Exception e) { break; }     // ffmpeg not installed
+        }
+        try { return (BufferedImage) Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("thumbnail", File.class, int.class, int.class).invoke(null, video, 640, 360); } catch (Throwable t) { return null; }
+    }
+
     // ---- inline player: the video plays inside the post card itself ----
     public static JComponent inlineFx; public static int inlineTok; public static Runnable inlineRestore;
     public static void stopInline() {
@@ -156,16 +193,24 @@ public class Videos {
         JComponent t = new JComponent() {
             { Dimension d = new Dimension(w, h); setPreferredSize(d); setMinimumSize(d); setMaximumSize(d); setCursor(new Cursor(Cursor.HAND_CURSOR)); }
             protected void paintComponent(Graphics g0) {
-                Graphics2D g = (Graphics2D) g0.create(); aa(g); int W = getWidth() - 5, H = getHeight() - 5;
-                g.setColor(INK); g.fillRect(5, 5, W, H); g.setColor(pastel(base)); g.fillRect(0, 0, W, H); frame(g, 0, 0, W, H, 3, INK);
-                int r = Math.min(W, H) / 5, cx = W / 2, cy = H / 2 - 14;
+                Graphics2D g = (Graphics2D) g0.create(); aa(g); g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                int W = getWidth() - 5, H = getHeight() - 5; BufferedImage im = thumbs.get(po.id);
+                g.setColor(INK); g.fillRect(5, 5, W, H); g.setColor(pastel(base)); g.fillRect(0, 0, W, H);
+                if (im != null) {   // real video frame, cropped to fill the tile
+                    double sc = Math.max((double) W / im.getWidth(), (double) H / im.getHeight()); int dw = (int) Math.ceil(im.getWidth() * sc), dh = (int) Math.ceil(im.getHeight() * sc);
+                    Shape old = g.getClip(); g.setClip(0, 0, W, H); g.drawImage(im, (W - dw) / 2, (H - dh) / 2, dw, dh, null); g.setClip(old);
+                }
+                int bar = 46, vh = H - bar;                       // caption band under the picture
+                g.setColor(pastel(base)); g.fillRect(0, vh, W, bar); g.setColor(ONACC); g.fillRect(0, vh, W, 3);
+                frame(g, 0, 0, W, H, 3, INK);
+                int r = Math.max(14, Math.min(W, vh) / 5), cx = W / 2, cy = vh / 2;
                 g.setColor(Color.WHITE); g.fillOval(cx - r, cy - r, 2 * r, 2 * r); g.setColor(Color.BLACK); g.setStroke(new BasicStroke(3f)); g.drawOval(cx - r, cy - r, 2 * r, 2 * r);
                 g.fillPolygon(new int[]{cx - r / 3, cx - r / 3, cx + r / 2}, new int[]{cy - r / 2, cy + r / 2, cy}, 3);
-                g.setColor(ONACC); g.fillRect(3, H - 46, W - 6, 3);
-                g.setFont(f(Font.BOLD, 12)); g.drawString(cap, 12, H - 26); g.setFont(f(Font.PLAIN, 11)); g.drawString(sub, 12, H - 10); g.dispose();
+                g.setColor(ONACC); g.setFont(f(Font.BOLD, 12)); g.drawString(cap, 12, H - 26); g.setFont(f(Font.PLAIN, 11)); g.drawString(sub, 12, H - 10); g.dispose();
             }
         };
         t.addMouseListener(new MouseAdapter() { public void mouseClicked(MouseEvent e) { onClick.run(); } });
+        if (!thumbs.containsKey(po.id)) thumbnail(po, t::repaint);
         return t;
     }
 

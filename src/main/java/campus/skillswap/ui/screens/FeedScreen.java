@@ -53,14 +53,6 @@ import static campus.skillswap.ui.media.Reels.*;
 public class FeedScreen {
 
     // ====================== FEED ======================
-    public static String snippet(String skill) {
-        switch (skill.toLowerCase()) {
-            case "java": return "for (Skill s : teach) {\n    if (want.contains(s)) swap(s);\n}";
-            case "python": return "for s in teach:\n    if s in want:\n        swap(s)";
-            case "javascript": return "teach.filter(s => want.has(s))\n     .forEach(swap);";
-            default: return null;
-        }
-    }
     public static JComponent feedPage() {
         Pg p = pg("Skill Feed", "Offers and requests from your campus", newPostButtons());
         JTextField q = searchField("Search topics (e.g., Java, Guitar)"); q.setText(feedQ); q.addActionListener(e -> { feedQ = q.getText().trim(); show("Feed"); }); put(p.body, q); gap(p.body, 8);
@@ -100,8 +92,6 @@ public class FeedScreen {
         if (a != null && !a.bio.isEmpty()) put(inf, lbl(a.bio, Font.PLAIN, 11, MUTED));
         put(inf, lbl("#" + po.skill.replace(" ", "") + "  #" + po.category + (offer ? "  #teaching" : "  #learning"), Font.BOLD, 11, PINKT));
         put(inf, lbl("<html><body style='width:300px'>" + esc(po.desc) + "</body></html>", Font.PLAIN, 12, MUTED));
-        String sn = snippet(po.skill);
-        if (sn != null) { JTextArea ta = new JTextArea(sn); ta.setEditable(false); ta.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12)); ta.setBackground(Color.BLACK); ta.setForeground(new Color(0x3DDC97)); ta.setBorder(new CompoundBorder(new LineBorder(INK, BW), new EmptyBorder(8, 10, 8, 10))); gap(inf, 4); put(inf, ta); }
         if (po.videoName != null) { gap(inf, 6); put(inf, inlineVideo(po)); gap(inf, 4); }
         JPanel foot = row(); JButton like = ghost("\u2665 " + po.likes.size(), () -> { });
         like.addActionListener(e -> { Post cur = postById(po.id); if (cur == null) return; if (!cur.likes.remove(me.username)) cur.likes.add(me.username); save();
