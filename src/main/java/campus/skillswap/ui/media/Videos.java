@@ -146,27 +146,62 @@ public class Videos {
         }
         ffmpegLastMiss = System.currentTimeMillis(); return null;
     }
-    /** Converts any video to MP4 (H.264 + AAC, max 1280 px, even sizes) in ~/.skillswap/cache/convert. progress gets 0-100. Blocks, so call it off the UI thread. */
+    /** What is inside a video, read with ffmpeg: {video codec, pixel format, audio codec or null, "rotated" or null}. */
+    static String[] probe(File f) {
+        String[] r = {null, null, null, null};
+        try {
+            Process pr = new ProcessBuilder(ffmpeg(), "-hide_banner", "-i", f.getAbsolutePath()).redirectErrorStream(true).start();
+            String out = new String(pr.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8); pr.waitFor(15, TimeUnit.SECONDS);
+            for (String line : out.split("\\R")) {
+                if (r[0] == null && line.contains("Video:") && !line.contains("attached pic")) {
+                    java.util.regex.Matcher m = java.util.regex.Pattern.compile("Video: (\\w+)").matcher(line); if (m.find()) r[0] = m.group(1);
+                    m = java.util.regex.Pattern.compile("\\b(yuvj?\\d{3}p\\d*(?:le|be)?|nv12|p010le|gbrp\\w*|rgb\\w*|bgr\\w*|pal8)\\b").matcher(line); if (m.find()) r[1] = m.group(1);
+                }
+                if (r[2] == null && line.contains("Audio:")) { java.util.regex.Matcher m = java.util.regex.Pattern.compile("Audio: (\\w+)").matcher(line); if (m.find()) r[2] = m.group(1); }
+                if (line.contains("displaymatrix") || line.matches("(?i).*\\brotate\\s*:\\s*(90|180|270).*")) r[3] = "rotated";
+            }
+        } catch (Exception e) { /* unknown: re-encode to be safe */ }
+        return r;
+    }
+    static void runFfmpeg(List<String> cmd, Consumer<Integer> progress) throws Exception {
+        Process pr = new ProcessBuilder(cmd).redirectErrorStream(true).start(); double dur = 0; String last = "";
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(pr.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+            String line; java.util.regex.Pattern dp = java.util.regex.Pattern.compile("Duration: (\\d+):(\\d+):(\\d+(?:\\.\\d+)?)");
+            while ((line = r.readLine()) != null) {
+                if (!line.contains("=")) last = line;
+                java.util.regex.Matcher m = dp.matcher(line); if (dur == 0 && m.find()) dur = Integer.parseInt(m.group(1)) * 3600 + Integer.parseInt(m.group(2)) * 60 + Double.parseDouble(m.group(3));
+                if (line.startsWith("out_time_ms=") && dur > 0) { try { progress.accept((int) Math.max(0, Math.min(99, Long.parseLong(line.substring(12).trim()) / 1e6 / dur * 100))); } catch (NumberFormatException e) { /* N/A */ } }
+            }
+        }
+        if (pr.waitFor() != 0) throw new IOException("ffmpeg could not convert this file. " + last);
+    }
+    /**
+     * Makes any video playable in the app without hurting quality: parts that are already fine (H.264 video, AAC audio) are copied untouched,
+     * only what the player can't read is re-encoded (high quality, original size up to 1920 px). Falls back to smaller/lighter settings only if the result is over the size limit.
+     */
     public static File convertForApp(File in, Consumer<Integer> progress) throws Exception {
         String ff = ffmpeg(); if (ff == null) throw new IOException("ffmpeg was not found");
         Path dir = DIR.resolve("cache").resolve("convert"); Files.createDirectories(dir);
         try (Stream<Path> st = Files.list(dir)) { for (Path p : (Iterable<Path>) st::iterator) if (System.currentTimeMillis() - Files.getLastModifiedTime(p).toMillis() > 86400000L) Files.deleteIfExists(p); } catch (IOException e) { /* cleanup only */ }
         String base = in.getName().replaceAll("\\.[^.]+$", "").replaceAll("[^A-Za-z0-9._-]", "_"); if (base.isEmpty()) base = "video";
-        File out = dir.resolve(base + ".mp4").toFile();
-        List<String> cmd = Arrays.asList(ff, "-y", "-i", in.getAbsolutePath(), "-map", "0:v:0", "-map", "0:a:0?",
-            "-vf", "scale=min(1280\\,iw):min(1280\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p", "-c:v", "libx264", "-profile:v", "high", "-level", "4.1", "-preset", "veryfast", "-crf", "23",
-            "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", out.getAbsolutePath());
-        Process pr = new ProcessBuilder(cmd).redirectErrorStream(true).start(); double dur = 0; String last = "";
-        try (BufferedReader r = new BufferedReader(new InputStreamReader(pr.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
-            String line; java.util.regex.Pattern dp = java.util.regex.Pattern.compile("Duration: (\\d+):(\\d+):(\\d+(?:\\.\\d+)?)");
-            while ((line = r.readLine()) != null) {
-                if (!line.startsWith("out_time_ms=") && !line.contains("=")) last = line;
-                java.util.regex.Matcher m = dp.matcher(line); if (dur == 0 && m.find()) dur = Integer.parseInt(m.group(1)) * 3600 + Integer.parseInt(m.group(2)) * 60 + Double.parseDouble(m.group(3));
-                if (line.startsWith("out_time_ms=") && dur > 0) { try { progress.accept((int) Math.max(0, Math.min(99, Long.parseLong(line.substring(12).trim()) / 1e6 / dur * 100))); } catch (NumberFormatException e) { /* N/A */ } }
-            }
+        File out = dir.resolve(base + ".mp4").toFile(); if (out.getAbsolutePath().equalsIgnoreCase(in.getAbsolutePath())) out = dir.resolve(base + "_app.mp4").toFile();
+        String[] info = probe(in);
+        boolean videoOk = "h264".equals(info[0]) && info[1] != null && info[1].matches("yuvj?420p") && info[3] == null;      // 8-bit H.264, not rotated by metadata
+        List<String> audio = info[2] == null ? Arrays.asList("-an") : "aac".equals(info[2]) ? Arrays.asList("-c:a", "copy") : Arrays.asList("-c:a", "aac", "-b:a", "192k", "-ac", "2");
+        List<List<String>> plans = new ArrayList<>();
+        if (videoOk) plans.add(Arrays.asList("-c:v", "copy"));
+        for (int[] q : new int[][]{{18, 1920}, {22, 1920}, {26, 1280}, {30, 1280}})
+            plans.add(Arrays.asList("-vf", "scale=min(" + q[1] + "\\,iw):min(" + q[1] + "\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p", "-c:v", "libx264", "-preset", "fast", "-crf", "" + q[0]));
+        Exception lastErr = null; boolean tooBig = false;
+        for (List<String> plan : plans) {
+            List<String> cmd = new ArrayList<>(Arrays.asList(ff, "-y", "-i", in.getAbsolutePath(), "-map", "0:v:0", "-map", "0:a:0?")); cmd.addAll(plan); cmd.addAll(audio);
+            cmd.addAll(Arrays.asList("-movflags", "+faststart", "-progress", "pipe:1", "-nostats", out.getAbsolutePath()));
+            try { runFfmpeg(cmd, progress); } catch (Exception e) { lastErr = e; continue; }
+            if (out.exists() && out.length() > 0 && out.length() <= MAX_VIDEO) { progress.accept(100); return out; }
+            tooBig = out.exists() && out.length() > MAX_VIDEO;
         }
-        if (pr.waitFor() != 0 || !out.exists() || out.length() == 0) throw new IOException("ffmpeg could not convert this file. " + last);
-        progress.accept(100); return out;
+        if (tooBig) throw new IOException("Even compressed, the video is over the " + mb(MAX_VIDEO) + " limit - trim it first.");
+        throw lastErr != null ? lastErr : new IOException("ffmpeg could not convert this file.");
     }
     public static void setStatus(String t) { try { if (statusBar != null) statusBar.setText(t); } catch (Throwable e) { /* ignore */ } }
     /** Converts in the background (progress shown in the status bar), then uploads the converted video. */
@@ -284,7 +319,7 @@ public class Videos {
         void show(JComponent c, boolean fill) { stage.removeAll(); stage.setLayout(fill ? new BorderLayout() : new GridBagLayout()); stage.add(c); stage.revalidate(); stage.repaint(); }
         void msg(String m) { show(lbl("<html><body style='width:250px;text-align:center'>" + esc(m) + "</body></html>", Font.PLAIN, 12, Color.WHITE), false); }
         public void stop() { tok++; if (cur != null) { fxStop(cur); cur = null; } }
-        static boolean isVideo(File f) { String n = f.getName().toLowerCase(); return f.isFile() && (n.endsWith(".mp4") || n.endsWith(".mov") || n.endsWith(".m4v") || n.endsWith(".webm") || n.endsWith(".mkv") || n.endsWith(".avi")); }
+        static boolean isVideo(File f) { String n = f.getName().toLowerCase(); for (String x : new String[]{".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".wmv", ".flv", ".mpg", ".mpeg", ".3gp", ".ts", ".mts", ".m2ts", ".ogv"}) if (f.isFile() && n.endsWith(x)) return true; return false; }
         public void propertyChange(java.beans.PropertyChangeEvent e) {
             String p = e.getPropertyName();
             if (JFileChooser.SELECTED_FILE_CHANGED_PROPERTY.equals(p)) load((File) e.getNewValue()); else if (JFileChooser.DIRECTORY_CHANGED_PROPERTY.equals(p)) load(null);

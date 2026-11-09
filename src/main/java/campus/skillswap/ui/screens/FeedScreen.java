@@ -118,7 +118,7 @@ public class FeedScreen {
         File[] pick = new File[1]; JLabel vl = lbl("No video selected", Font.PLAIN, 12, MUTED); Preview pv = new Preview(); JCheckBox conv = ffmpeg() != null ? check("Convert for in-app playback (recommended)", true) : null;
         JButton vb = ghost("Choose video...", null);
         vb.addActionListener(e -> {
-            JFileChooser fc = new JFileChooser(); fc.setFileFilter(new FileNameExtensionFilter("Video files (mp4, mov, m4v, webm, mkv, avi)", "mp4", "mov", "m4v", "webm", "mkv", "avi"));
+            JFileChooser fc = new JFileChooser(); fc.setFileFilter(new FileNameExtensionFilter("All video files (MP4, MOV, MKV, AVI, WebM, WMV, FLV, MPEG, 3GP...)", "mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "flv", "mpg", "mpeg", "3gp", "ts", "mts", "m2ts", "ogv"));
             ChooserPreview cp = new ChooserPreview(fc); fc.setAccessory(cp); fc.setPreferredSize(new Dimension(880, 560));
             int res = fc.showOpenDialog(vb); cp.stop(); if (res != JFileChooser.APPROVE_OPTION) return; File f = fc.getSelectedFile();
             if (f.length() > MAX_VIDEO) { info("That video is " + mb(f.length()) + ". The limit is " + mb(MAX_VIDEO) + " - trim or compress it first."); return; }
