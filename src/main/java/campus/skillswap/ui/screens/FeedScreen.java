@@ -121,6 +121,8 @@ public class FeedScreen {
             JFileChooser fc = new JFileChooser(); fc.setFileFilter(new FileNameExtensionFilter("Video files (mp4, mov, m4v, webm, mkv, avi)", "mp4", "mov", "m4v", "webm", "mkv", "avi"));
             if (fc.showOpenDialog(vb) != JFileChooser.APPROVE_OPTION) return; File f = fc.getSelectedFile();
             if (f.length() > MAX_VIDEO) { info("That video is " + mb(f.length()) + ". The limit is " + mb(MAX_VIDEO) + " - trim or compress it first."); return; }
+            String prob = playProblem(f);
+            if (prob != null && JOptionPane.showConfirmDialog(vb, "This video may not play inside the app because " + prob + ".\nConvert it to MP4 (H.264 video + AAC audio) first, for example with the free HandBrake.\n\nUpload it anyway?", "Video format", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) return;
             pick[0] = f; vl.setText(f.getName() + " (" + mb(f.length()) + ")"); });
         JPanel vrow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0)); vrow.setOpaque(false); vrow.add(vb); vrow.add(vl);
         if (!ask(reel ? "New reel" : "New post", form(new String[]{"Type", "Skill", "Details", "Video"}, new JComponent[]{type, skill, scroller(d), vrow}))) return;

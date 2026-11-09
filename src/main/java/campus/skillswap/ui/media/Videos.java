@@ -56,6 +56,20 @@ public class Videos {
     // ====================== VIDEO / REELS ======================
     public static final long MAX_VIDEO = 60L * 1024 * 1024;     // videos live in PostgreSQL (BYTEA), so keep them short
     public static String[] xfer;                                // host, port, db, user, password: video transfers use their own connection
+    /** null if the in-app player (JavaFX) should handle this file; otherwise a short reason why it probably won't. */
+    public static String playProblem(File f) {
+        String n = f.getName().toLowerCase();
+        if (!(n.endsWith(".mp4") || n.endsWith(".m4v") || n.endsWith(".mov"))) return "the in-app player only plays MP4 / M4V / MOV files";
+        try (RandomAccessFile r = new RandomAccessFile(f, "r")) {
+            long len = r.length(); int chunk = (int) Math.min(len, 6L * 1024 * 1024);
+            for (long pos : new long[]{0, len - chunk}) {          // the codec name sits in the file header (or at the very end)
+                r.seek(pos); byte[] b = new byte[chunk]; r.readFully(b); String t = new String(b, java.nio.charset.StandardCharsets.ISO_8859_1);
+                if (t.contains("hvc1") || t.contains("hev1")) return "it uses H.265 / HEVC video (common for iPhone and some Android recordings)";
+                if (t.contains("av01") || t.contains("vp09")) return "it uses AV1 / VP9 video";
+            }
+        } catch (IOException e) { /* unreadable: let the upload report it */ }
+        return null;
+    }
     public static String mb(long b) { return String.format("%.1f MB", b / 1048576.0); }
     public static Post postById(int id) { return S.posts.stream().filter(p -> p.id == id).findFirst().orElse(null); }
     public static List<Post> videoPosts() { return S.posts.stream().filter(p -> p.videoName != null).sorted((a, b) -> Long.compare(b.time, a.time)).collect(Collectors.toList()); }
