@@ -121,7 +121,7 @@ public class Theme {
      * Hover nudges it toward the shadow, press sinks it flat. {@code flat(true)} drops the border/shadow (used for inactive nav items).
      */
     public static class RBtn extends JButton {
-        boolean flat;
+        boolean flat; public Color disabledBg;
         public RBtn(String t, int arc) {
             super(t); setContentAreaFilled(false); setOpaque(false); setBorderPainted(false); setFocusPainted(false); setRolloverEnabled(true);
             setBorder(new EmptyBorder(6, 14, 6, 14));
@@ -133,7 +133,7 @@ public class Theme {
             Graphics2D g = (Graphics2D) g0.create(); int w = getWidth() - SH, h = getHeight() - SH;
             boolean down = getModel().isArmed() && getModel().isPressed(), hov = getModel().isRollover() && isEnabled();
             int o = flat ? 0 : down ? SH : hov ? 1 : 0;
-            Color bg = isEnabled() ? getBackground() : PANEL2;
+            Color bg = isEnabled() ? getBackground() : (disabledBg != null ? disabledBg : PANEL2);
             if (flat) {
                 if (hov || down) { g.setColor(PANEL2); g.fillRect(0, 0, w, h); frame(g, 0, 0, w, h, BW, INK); } else { g.setColor(bg); g.fillRect(0, 0, w, h); }
             } else {

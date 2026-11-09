@@ -53,17 +53,21 @@ import static campus.skillswap.ui.media.Videos.*;
 public class Reels {
 
     public static JDialog reelDlg; public static List<Integer> reelIds = new ArrayList<>(); public static int reelIdx, reelTok; public static JComponent reelFx; public static long lastWheel;
+    /** Size of the video area, worked out from the screen when the viewer opens (it fills the whole monitor). */
+    public static int reelW = 360, reelH = 540, reelPad = 0;
     public static final Color REEL_MUTED = new Color(0xB8BFE0);
     public static void fixSize(JComponent c, int w, int h) { Dimension d = new Dimension(w, h); c.setPreferredSize(d); c.setMinimumSize(d); c.setMaximumSize(d); }
     public static JButton reelBtn(String t, Runnable r) {
         RBtn b = new RBtn(t, 30); b.setFont(f(Font.BOLD, 13)); b.setForeground(Color.WHITE); b.setBackground(new Color(0x262B3D)); b.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        b.setBorder(new EmptyBorder(0, 0, 0, 0)); fixSize(b, 76, 46); b.setAlignmentX(0.5f); if (r != null) b.addActionListener(e -> r.run()); return b;
+        b.setBorder(new EmptyBorder(0, 0, 0, 0)); b.disabledBg = new Color(0x12151F); fixSize(b, 76, 46); b.setAlignmentX(0.5f); if (r != null) b.addActionListener(e -> r.run()); return b;
     }
     public static void openReels(int postId) {
         reelIds = videoPosts().stream().map(p -> p.id).collect(Collectors.toList()); if (reelIds.isEmpty()) return;
         reelIdx = Math.max(0, reelIds.indexOf(postId));
         if (reelDlg == null) {
-            reelDlg = new JDialog(frame, "Reels", false); reelDlg.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE); reelDlg.setSize(620, 850); reelDlg.setLocationRelativeTo(frame);
+            reelDlg = new JDialog(frame, "Reels", false); reelDlg.setUndecorated(true); reelDlg.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+            Rectangle sb = frame.getGraphicsConfiguration().getBounds(); reelDlg.setBounds(sb);          // cover the whole screen of the monitor the app is on
+            reelH = Math.max(360, sb.height - 195); reelW = Math.max(420, Math.min((int) (sb.width * 0.68), sb.width - 260)); reelPad = Math.max(0, (sb.width - 32 - (reelW + 14 + 76)) / 2);
             reelDlg.getContentPane().setBackground(Color.BLACK);
             reelDlg.addWindowListener(new WindowAdapter() { public void windowClosing(WindowEvent e) { closeReels(); } });
             JRootPane rp = reelDlg.getRootPane();
@@ -72,7 +76,7 @@ public class Reels {
             rp.registerKeyboardAction(e -> closeReels(), KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
             reelDlg.addMouseWheelListener(e -> { long n = System.currentTimeMillis(); if (n - lastWheel > 450) { lastWheel = n; reelStep(e.getWheelRotation() > 0 ? 1 : -1); } });
         }
-        renderReel(); reelDlg.setVisible(true);
+        renderReel(); reelDlg.setVisible(true); reelDlg.toFront(); reelDlg.requestFocus();
     }
     public static void reelStep(int d) { int n = reelIdx + d; if (n < 0 || n >= reelIds.size()) return; reelIdx = n; renderReel(); }
     public static void closeReels() {
@@ -94,13 +98,13 @@ public class Reels {
     public static JPanel buildReel(Post po, int tok) {
         final int pid = po.id; final Color W = Color.WHITE;
         JPanel main = new JPanel(new BorderLayout(0, 10)); main.setBackground(Color.BLACK); main.setBorder(new EmptyBorder(12, 16, 14, 16));
-        JPanel tb = new JPanel(new BorderLayout()); tb.setOpaque(false); tb.add(lbl("Reels", Font.BOLD, 20, W), BorderLayout.WEST);
+        JPanel tb = new JPanel(new BorderLayout()); tb.setOpaque(false); tb.add(lbl("Reels", Font.BOLD, 24, W), BorderLayout.WEST); JPanel hint = new JPanel(new GridBagLayout()); hint.setOpaque(false); hint.add(lbl("\u2191 \u2193 or mouse wheel: next reel     Esc: exit full screen", Font.PLAIN, 12, REEL_MUTED)); tb.add(hint, BorderLayout.CENTER);
         JPanel tr = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0)); tr.setOpaque(false); tr.add(lbl((reelIdx + 1) + " / " + reelIds.size(), Font.PLAIN, 12, REEL_MUTED));
         JButton x = reelBtn("\u2715", Reels::closeReels); fixSize(x, 44, 34); tr.add(x); tb.add(tr, BorderLayout.EAST); main.add(tb, BorderLayout.NORTH);
 
-        JPanel stage = new JPanel(new GridBagLayout()); stage.setBackground(new Color(0x07090F)); fixSize(stage, 360, 540);
+        JPanel stage = new JPanel(new GridBagLayout()); stage.setBackground(new Color(0x07090F)); fixSize(stage, reelW, reelH);
         stage.add(lbl("Loading video...", Font.PLAIN, 14, REEL_MUTED));
-        JPanel act = new JPanel(); act.setLayout(new BoxLayout(act, BoxLayout.Y_AXIS)); act.setOpaque(false); fixSize(act, 76, 540);
+        JPanel act = new JPanel(); act.setLayout(new BoxLayout(act, BoxLayout.Y_AXIS)); act.setOpaque(false); fixSize(act, 76, reelH);
         JButton like = reelBtn("\u2665 " + po.likes.size(), null); like.setForeground(po.likes.contains(me.username) ? PINK : W);
         like.addActionListener(e -> { Post cur = postById(pid); if (cur == null) return; if (!cur.likes.remove(me.username)) cur.likes.add(me.username); save();
             like.setText("\u2665 " + cur.likes.size()); like.setForeground(cur.likes.contains(me.username) ? PINK : W); if (page.equals("Feed")) show("Feed"); });
@@ -116,13 +120,13 @@ public class Reels {
         act.add(up); act.add(Box.createVerticalStrut(10)); act.add(dn);
         JPanel mid = new JPanel(new FlowLayout(FlowLayout.CENTER, 14, 0)); mid.setOpaque(false); mid.add(stage); mid.add(act); main.add(mid);
 
-        JPanel info = vbox(); JPanel who = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0)); who.setOpaque(false);
+        JPanel info = vbox(); info.setBorder(new EmptyBorder(0, reelPad, 0, 0)); JPanel who = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0)); who.setOpaque(false);
         who.add(avatar(name(po.author), 36)); who.add(lbl(name(po.author), Font.BOLD, 15, W)); User a = S.users.get(po.author); if (a != null && verified(a)) who.add(tag("VERIFIED", GREEN));
         who.add(tag(po.type.equals("OFFER") ? "OFFERING" : "REQUESTING", po.type.equals("OFFER") ? GREEN : GOLD)); put(info, who); gap(info, 6);
         if (!po.desc.isEmpty()) { put(info, wrapLabel(po.desc, W, 13)); gap(info, 4); }
         put(info, lbl("#" + po.skill.replace(" ", "") + "  #" + po.category + "  #reel", Font.BOLD, 11, PINK)); main.add(info, BorderLayout.SOUTH);
 
-        withVideo(po, file -> { if (tok != reelTok) return; stage.removeAll(); stage.setLayout(new BorderLayout()); JComponent fx = fxPlayer(file, 360, 540, msg -> { if (tok != reelTok) return; if (reelFx != null) { fxStop(reelFx); reelFx = null; } stage.removeAll(); stage.add(reelPoster(po, file)); stage.revalidate(); stage.repaint(); });
+        withVideo(po, file -> { if (tok != reelTok) return; stage.removeAll(); stage.setLayout(new BorderLayout()); JComponent fx = fxPlayer(file, reelW, reelH, msg -> { if (tok != reelTok) return; if (reelFx != null) { fxStop(reelFx); reelFx = null; } stage.removeAll(); stage.add(reelPoster(po, file)); stage.revalidate(); stage.repaint(); });
                 if (fx != null) { reelFx = fx; stage.add(fx); } else stage.add(reelPoster(po, file)); stage.revalidate(); stage.repaint(); },
             err -> { if (tok != reelTok) return; stage.removeAll(); stage.add(lbl("<html><body style='width:300px'>Could not load video: " + esc(err) + "</body></html>", Font.PLAIN, 13, PINK)); stage.revalidate(); stage.repaint(); });
         return main;
