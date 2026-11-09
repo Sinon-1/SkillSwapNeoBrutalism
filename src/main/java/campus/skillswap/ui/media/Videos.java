@@ -133,6 +133,54 @@ public class Videos {
         Consumer<String> wrapped = why -> onFail.accept(friendly(why) + "  [" + diagnose(f) + "]");
         try { return (JComponent) Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("create", File.class, int.class, int.class, Consumer.class).invoke(null, f, w, h, wrapped); } catch (Throwable t) { return null; }
     }
+    // ---- ffmpeg: converts any video to MP4 (H.264 + AAC) so it always plays in the app ----
+    static String ffmpegExe; static long ffmpegLastMiss;
+    /** Path of a working ffmpeg, or null. Looks in lib/ffmpeg (see scripts/get-ffmpeg), then ~/.skillswap, then the system PATH. */
+    public static synchronized String ffmpeg() {
+        if (ffmpegExe != null) return ffmpegExe;
+        if (System.currentTimeMillis() - ffmpegLastMiss < 20000) return null;          // do not keep spawning processes while it is missing
+        String exe = System.getProperty("os.name", "").toLowerCase().contains("win") ? "ffmpeg.exe" : "ffmpeg";
+        for (String c : new String[]{Paths.get("lib", "ffmpeg", exe).toAbsolutePath().toString(), DIR.resolve(exe).toString(), "ffmpeg"}) {
+            try { Process pr = new ProcessBuilder(c, "-version").redirectErrorStream(true).start(); pr.getInputStream().readAllBytes();
+                if (pr.waitFor(10, TimeUnit.SECONDS) && pr.exitValue() == 0) { ffmpegExe = c; return c; } } catch (Exception e) { /* try the next place */ }
+        }
+        ffmpegLastMiss = System.currentTimeMillis(); return null;
+    }
+    /** Converts any video to MP4 (H.264 + AAC, max 1280 px, even sizes) in ~/.skillswap/cache/convert. progress gets 0-100. Blocks, so call it off the UI thread. */
+    public static File convertForApp(File in, Consumer<Integer> progress) throws Exception {
+        String ff = ffmpeg(); if (ff == null) throw new IOException("ffmpeg was not found");
+        Path dir = DIR.resolve("cache").resolve("convert"); Files.createDirectories(dir);
+        try (Stream<Path> st = Files.list(dir)) { for (Path p : (Iterable<Path>) st::iterator) if (System.currentTimeMillis() - Files.getLastModifiedTime(p).toMillis() > 86400000L) Files.deleteIfExists(p); } catch (IOException e) { /* cleanup only */ }
+        String base = in.getName().replaceAll("\\.[^.]+$", "").replaceAll("[^A-Za-z0-9._-]", "_"); if (base.isEmpty()) base = "video";
+        File out = dir.resolve(base + ".mp4").toFile();
+        List<String> cmd = Arrays.asList(ff, "-y", "-i", in.getAbsolutePath(), "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", "scale=min(1280\\,iw):min(1280\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p", "-c:v", "libx264", "-profile:v", "high", "-level", "4.1", "-preset", "veryfast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", out.getAbsolutePath());
+        Process pr = new ProcessBuilder(cmd).redirectErrorStream(true).start(); double dur = 0; String last = "";
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(pr.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+            String line; java.util.regex.Pattern dp = java.util.regex.Pattern.compile("Duration: (\\d+):(\\d+):(\\d+(?:\\.\\d+)?)");
+            while ((line = r.readLine()) != null) {
+                if (!line.startsWith("out_time_ms=") && !line.contains("=")) last = line;
+                java.util.regex.Matcher m = dp.matcher(line); if (dur == 0 && m.find()) dur = Integer.parseInt(m.group(1)) * 3600 + Integer.parseInt(m.group(2)) * 60 + Double.parseDouble(m.group(3));
+                if (line.startsWith("out_time_ms=") && dur > 0) { try { progress.accept((int) Math.max(0, Math.min(99, Long.parseLong(line.substring(12).trim()) / 1e6 / dur * 100))); } catch (NumberFormatException e) { /* N/A */ } }
+            }
+        }
+        if (pr.waitFor() != 0 || !out.exists() || out.length() == 0) throw new IOException("ffmpeg could not convert this file. " + last);
+        progress.accept(100); return out;
+    }
+    public static void setStatus(String t) { try { if (statusBar != null) statusBar.setText(t); } catch (Throwable e) { /* ignore */ } }
+    /** Converts in the background (progress shown in the status bar), then uploads the converted video. */
+    public static void convertAndUpload(int postId, File f) {
+        toast("Converting your video so it plays in the app...");
+        new Thread(() -> {
+            try {
+                final File out = convertForApp(f, pct -> SwingUtilities.invokeLater(() -> setStatus("Converting video... " + pct + "%")));
+                if (out.length() > MAX_VIDEO) throw new IOException("The converted video is " + mb(out.length()) + ", over the " + mb(MAX_VIDEO) + " limit - trim it first.");
+                SwingUtilities.invokeLater(() -> { setStatus("Video converted - uploading..."); uploadVideo(postId, out); });
+            } catch (Exception e) { SwingUtilities.invokeLater(() -> { setStatus(" "); toast("Video conversion failed: " + nz(e.getMessage()).split("\n")[0]); }); }
+        }, "video-convert").start();
+    }
+
     /** Plain-English version of a JavaFX media error. */
     static String friendly(String why) {
         String w = nz(why);
@@ -187,9 +235,10 @@ public class Videos {
     /** First usable frame of a video: tries ffmpeg (any format) if installed, then the JavaFX player if present. */
     static BufferedImage grabFrame(File video) {
         for (String seek : new String[]{"0.5", "0"}) {
+            String ff = ffmpeg(); if (ff == null) break;
             try {
                 File tmp = File.createTempFile("ssthumb", ".png"); tmp.delete();
-                Process pr = new ProcessBuilder("ffmpeg", "-v", "error", "-y", "-ss", seek, "-i", video.getAbsolutePath(), "-frames:v", "1", "-vf", "scale='min(640,iw)':-2", tmp.getAbsolutePath()).redirectErrorStream(true).start();
+                Process pr = new ProcessBuilder(ff, "-v", "error", "-y", "-ss", seek, "-i", video.getAbsolutePath(), "-frames:v", "1", "-vf", "scale='min(640,iw)':-2", tmp.getAbsolutePath()).redirectErrorStream(true).start();
                 pr.getInputStream().readAllBytes();
                 if (!pr.waitFor(20, TimeUnit.SECONDS)) pr.destroyForcibly();
                 if (tmp.exists()) { BufferedImage im = javax.imageio.ImageIO.read(tmp); tmp.delete(); if (im != null) return im; }
@@ -243,7 +292,7 @@ public class Videos {
         void load(File f) {
             stop(); sel = f; final int my = tok;
             if (f == null || !isVideo(f)) { info.setText(" "); warn.setText(" "); play.setEnabled(false); msg("Click a video file to see it here"); return; }
-            info.setText(f.getName() + "  (" + mb(f.length()) + ")"); String prob = playProblem(f); warn.setText(prob == null ? "Plays in the app" : "<html><body style='width:262px'>\u26A0 May not play in the app: " + esc(prob.replaceAll("\\s*\\(.*\\)", "")) + "</body></html>");
+            info.setText(f.getName() + "  (" + mb(f.length()) + ")"); String prob = playProblem(f); warn.setText(prob == null ? "Plays in the app" : ffmpeg() != null ? "Will be converted automatically when you upload" : "<html><body style='width:262px'>\u26A0 May not play in the app: " + esc(prob.replaceAll("\\s*\\(.*\\)", "")) + "</body></html>");
             play.setEnabled(true); msg("Loading preview...");
             pool.submit(() -> { BufferedImage im = grabFrame(f);
                 SwingUtilities.invokeLater(() -> { if (my != tok) return;

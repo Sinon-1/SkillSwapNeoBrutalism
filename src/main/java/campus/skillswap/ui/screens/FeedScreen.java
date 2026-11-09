@@ -115,7 +115,7 @@ public class FeedScreen {
         JComboBox<String> type = combo(new String[]{"OFFER (I can teach)", "REQUEST (I want to learn)"});
         JComboBox<String> skill = combo(CAT.keySet().stream().map(s -> s.substring(0, 1).toUpperCase() + s.substring(1)).toArray(String[]::new)); skill.setEditable(true);
         JTextArea d = area(4, 24);
-        File[] pick = new File[1]; JLabel vl = lbl("No video selected", Font.PLAIN, 12, MUTED); Preview pv = new Preview();
+        File[] pick = new File[1]; JLabel vl = lbl("No video selected", Font.PLAIN, 12, MUTED); Preview pv = new Preview(); JCheckBox conv = ffmpeg() != null ? check("Convert for in-app playback (recommended)", true) : null;
         JButton vb = ghost("Choose video...", null);
         vb.addActionListener(e -> {
             JFileChooser fc = new JFileChooser(); fc.setFileFilter(new FileNameExtensionFilter("Video files (mp4, mov, m4v, webm, mkv, avi)", "mp4", "mov", "m4v", "webm", "mkv", "avi"));
@@ -123,10 +123,10 @@ public class FeedScreen {
             int res = fc.showOpenDialog(vb); cp.stop(); if (res != JFileChooser.APPROVE_OPTION) return; File f = fc.getSelectedFile();
             if (f.length() > MAX_VIDEO) { info("That video is " + mb(f.length()) + ". The limit is " + mb(MAX_VIDEO) + " - trim or compress it first."); return; }
             String prob = playProblem(f);
-            if (prob != null && JOptionPane.showConfirmDialog(vb, "This video may not play inside the app because " + prob + ".\nConvert it to MP4 (H.264 video + AAC audio) first, for example with the free HandBrake.\n\nUpload it anyway?", "Video format", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) return;
+            if (prob != null && ffmpeg() == null && JOptionPane.showConfirmDialog(vb, "This video may not play inside the app because " + prob + ".\nConvert it to MP4 (H.264 video + AAC audio) first, for example with the free HandBrake.\n\nUpload it anyway?", "Video format", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) return;
             pick[0] = f; vl.setText(f.getName() + " (" + mb(f.length()) + ")"); pv.show(f); });
         JPanel vrow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0)); vrow.setOpaque(false); vrow.add(vb); vrow.add(vl);
-        boolean ok = ask(reel ? "New reel" : "New post", form(new String[]{"Type", "Skill", "Details", "Video", "Preview"}, new JComponent[]{type, skill, scroller(d), vrow, pv}));
+        boolean ok = ask(reel ? "New reel" : "New post", form(new String[]{"Type", "Skill", "Details", "Video", "Preview", ""}, new JComponent[]{type, skill, scroller(d), vrow, pv, conv != null ? conv : lbl("<html><body style='width:330px'>Tip: run scripts\\get-ffmpeg.bat once and videos will be converted automatically so they always play.</body></html>", Font.PLAIN, 11, MUTED)}));
         pv.stop(); if (!ok) return;
         String sk = String.valueOf(skill.getSelectedItem()).trim(); if (sk.isEmpty()) return;
         if (reel && pick[0] == null) { info("A reel needs a video - choose one and try again."); return; }
@@ -134,6 +134,6 @@ public class FeedScreen {
         String txt = d.getText().trim(); po.desc = txt.isEmpty() ? (pick[0] != null ? "" : "(no details)") : txt; po.time = System.currentTimeMillis(); S.posts.add(po);
         List<String> l = po.type.equals("OFFER") ? me.teach : me.learn; if (l.stream().noneMatch(x -> x.equalsIgnoreCase(sk))) l.add(sk);
         save(); feedFilter = "All"; show("Feed"); toast("Post published");
-        if (pick[0] != null) uploadVideo(po.id, pick[0]);
+        if (pick[0] != null) { if (conv != null && conv.isSelected()) convertAndUpload(po.id, pick[0]); else uploadVideo(po.id, pick[0]); }
     }
 }

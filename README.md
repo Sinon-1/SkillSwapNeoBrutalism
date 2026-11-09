@@ -87,3 +87,13 @@ Demo accounts (password `demo`): ramos, alamag, henry, jeb, chinu, dino, jamesa,
   and put a small backend API between the app and the database, so the DB password never leaves the server.
 - Reels are stored inside PostgreSQL (BYTEA, max 60 MB each). Large volumes need object storage instead.
 - Never commit `.env` or `config.properties` (both are in `.gitignore`).
+
+## Videos: automatic conversion (recommended)
+The in-app player only plays MP4 with H.264 video + AAC audio. Install ffmpeg once and SkillSwap converts every
+uploaded video to that format for you (progress shows in the status bar; the original file is not changed):
+
+* Windows: double-click `scripts\get-ffmpeg.bat` (downloads ffmpeg into `lib\ffmpeg`), or run `winget install Gyan.FFmpeg`.
+* macOS / Linux: `brew install ffmpeg` / `sudo apt install ffmpeg`.
+
+In the New post / New reel window, "Convert for in-app playback" is ticked by default when ffmpeg is found.
+The file picker's Preview panel and video thumbnails also use ffmpeg when it is available.
