@@ -87,13 +87,16 @@ public class Reels {
         Post po = postById(reelIds.get(reelIdx)); if (po == null) { closeReels(); return; }
         reelDlg.setContentPane(buildReel(po, ++reelTok)); reelDlg.revalidate(); reelDlg.repaint();
     }
-    public static JComponent reelPoster(Post po, File file) {
+    /** Shown instead of the video when it can't be played in the app. Nothing ever opens in another program. */
+    public static JComponent reelPoster(Post po, String why) {
         final Color base = catColor(po.category);
         JPanel p = new JPanel(new GridBagLayout()) { protected void paintComponent(Graphics g0) { Graphics2D g = (Graphics2D) g0.create();
             g.setPaint(new GradientPaint(0, 0, base.darker(), 0, getHeight(), Color.BLACK)); g.fillRect(0, 0, getWidth(), getHeight()); g.dispose(); } };
-        JPanel v = vbox(); JButton play = btn("\u25B6  Play video", () -> openExternal(file)); play.setFont(f(Font.BOLD, 16)); play.setBorder(new EmptyBorder(12, 26, 12, 26));
-        JLabel nm = lbl(po.videoName, Font.PLAIN, 12, Color.WHITE), hint = lbl("Opens in your default video player", Font.PLAIN, 11, REEL_MUTED);
-        play.setAlignmentX(0.5f); nm.setAlignmentX(0.5f); hint.setAlignmentX(0.5f); v.add(play); gap(v, 14); v.add(nm); gap(v, 4); v.add(hint); p.add(v); return p;
+        String first = nz(why).split("\n")[0]; if (first.length() > 160) first = first.substring(0, 160) + "...";
+        JPanel v = vbox(); JLabel t = lbl("This video can't be played inside the app.", Font.BOLD, 16, Color.WHITE);
+        JLabel r = lbl("<html><body style='width:320px;text-align:center'>" + esc(first) + "</body></html>", Font.PLAIN, 12, Color.WHITE);
+        JLabel h = lbl("<html><body style='width:320px;text-align:center'>Convert it to MP4 (H.264 video + AAC audio), then upload it again.</body></html>", Font.PLAIN, 12, REEL_MUTED);
+        t.setAlignmentX(0.5f); r.setAlignmentX(0.5f); h.setAlignmentX(0.5f); v.add(t); gap(v, 10); v.add(r); gap(v, 8); v.add(h); p.add(v); return p;
     }
     public static JPanel buildReel(Post po, int tok) {
         final int pid = po.id; final Color W = Color.WHITE;
@@ -126,8 +129,8 @@ public class Reels {
         if (!po.desc.isEmpty()) { put(info, wrapLabel(po.desc, W, 13)); gap(info, 4); }
         put(info, lbl("#" + po.skill.replace(" ", "") + "  #" + po.category + "  #reel", Font.BOLD, 11, PINK)); main.add(info, BorderLayout.SOUTH);
 
-        withVideo(po, file -> { if (tok != reelTok) return; stage.removeAll(); stage.setLayout(new BorderLayout()); JComponent fx = fxPlayer(file, reelW, reelH, msg -> { if (tok != reelTok) return; if (reelFx != null) { fxStop(reelFx); reelFx = null; } stage.removeAll(); stage.add(reelPoster(po, file)); stage.revalidate(); stage.repaint(); });
-                if (fx != null) { reelFx = fx; stage.add(fx); } else stage.add(reelPoster(po, file)); stage.revalidate(); stage.repaint(); },
+        withVideo(po, file -> { if (tok != reelTok) return; stage.removeAll(); stage.setLayout(new BorderLayout()); JComponent fx = fxPlayer(file, reelW, reelH, msg -> { if (tok != reelTok) return; if (reelFx != null) { fxStop(reelFx); reelFx = null; } stage.removeAll(); stage.add(reelPoster(po, msg)); stage.revalidate(); stage.repaint(); });
+                if (fx != null) { reelFx = fx; stage.add(fx); } else stage.add(reelPoster(po, "The in-app player (JavaFX) is not available. Start the app with scripts\\run-dev.bat.")); stage.revalidate(); stage.repaint(); },
             err -> { if (tok != reelTok) return; stage.removeAll(); stage.add(lbl("<html><body style='width:300px'>Could not load video: " + esc(err) + "</body></html>", Font.PLAIN, 13, PINK)); stage.revalidate(); stage.repaint(); });
         return main;
     }

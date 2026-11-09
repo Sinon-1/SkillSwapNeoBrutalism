@@ -59,7 +59,7 @@ mvn exec:java            # or scripts/run-dev.sh  /  scripts\run-dev.bat
 ```
 
 No Maven? `scripts/build-no-maven.sh` (or `.bat`) compiles with plain `javac` and the jar in `lib/`
-(reels then open in the default video player instead of inside the app).
+(videos then can not be played, because the in-app player needs JavaFX - use run-dev).
 
 If you pick PostgreSQL, enter host, port, database, user and password. The database and all tables are created
 automatically, and demo data is added if it is empty. Settings are remembered per computer in `~/.skillswap/config.properties`.

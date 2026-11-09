@@ -1,7 +1,5 @@
 package campus.skillswap.ui.media;
 
-import static campus.skillswap.ui.media.Videos.openExternal;
-
 import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.image.WritableImage;
@@ -23,12 +21,12 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * OPTIONAL: plays reels inside SkillSwap Campus using JavaFX.
- * Videos finds this class by name; if it (or JavaFX) is missing, videos open in the computer's default player instead.
- * JavaFX plays MP4 (H.264 + AAC), M4V and MOV(H.264). If a file can't be decoded, it falls back to the default player automatically.
+ * Videos finds this class by name; if it (or JavaFX) is missing, the app shows a message (videos never open in another program).
+ * JavaFX plays MP4 (H.264 + AAC), M4V and MOV(H.264). If a file can't be decoded, the app shows why.
  */
 public class VideoPlayerFX {
     /** Autoplaying, looping video. Click the video to pause / resume. */
-    public static JComponent create(File f, int w, int h) { return create(f, w, h, msg -> openExternal(f)); }
+    public static JComponent create(File f, int w, int h) { return create(f, w, h, msg -> { }); }
     /** Same, but on a playback error calls onFail(reason) on the Swing thread instead of switching to another app. */
     public static JComponent create(File f, int w, int h, java.util.function.Consumer<String> onFail) {
         JFXPanel panel = new JFXPanel();                 // also starts the JavaFX runtime

@@ -115,17 +115,19 @@ public class FeedScreen {
         JComboBox<String> type = combo(new String[]{"OFFER (I can teach)", "REQUEST (I want to learn)"});
         JComboBox<String> skill = combo(CAT.keySet().stream().map(s -> s.substring(0, 1).toUpperCase() + s.substring(1)).toArray(String[]::new)); skill.setEditable(true);
         JTextArea d = area(4, 24);
-        File[] pick = new File[1]; JLabel vl = lbl("No video selected", Font.PLAIN, 12, MUTED);
+        File[] pick = new File[1]; JLabel vl = lbl("No video selected", Font.PLAIN, 12, MUTED); Preview pv = new Preview();
         JButton vb = ghost("Choose video...", null);
         vb.addActionListener(e -> {
             JFileChooser fc = new JFileChooser(); fc.setFileFilter(new FileNameExtensionFilter("Video files (mp4, mov, m4v, webm, mkv, avi)", "mp4", "mov", "m4v", "webm", "mkv", "avi"));
-            if (fc.showOpenDialog(vb) != JFileChooser.APPROVE_OPTION) return; File f = fc.getSelectedFile();
+            ChooserPreview cp = new ChooserPreview(fc); fc.setAccessory(cp); fc.setPreferredSize(new Dimension(880, 560));
+            int res = fc.showOpenDialog(vb); cp.stop(); if (res != JFileChooser.APPROVE_OPTION) return; File f = fc.getSelectedFile();
             if (f.length() > MAX_VIDEO) { info("That video is " + mb(f.length()) + ". The limit is " + mb(MAX_VIDEO) + " - trim or compress it first."); return; }
             String prob = playProblem(f);
             if (prob != null && JOptionPane.showConfirmDialog(vb, "This video may not play inside the app because " + prob + ".\nConvert it to MP4 (H.264 video + AAC audio) first, for example with the free HandBrake.\n\nUpload it anyway?", "Video format", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) return;
-            pick[0] = f; vl.setText(f.getName() + " (" + mb(f.length()) + ")"); });
+            pick[0] = f; vl.setText(f.getName() + " (" + mb(f.length()) + ")"); pv.show(f); });
         JPanel vrow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0)); vrow.setOpaque(false); vrow.add(vb); vrow.add(vl);
-        if (!ask(reel ? "New reel" : "New post", form(new String[]{"Type", "Skill", "Details", "Video"}, new JComponent[]{type, skill, scroller(d), vrow}))) return;
+        boolean ok = ask(reel ? "New reel" : "New post", form(new String[]{"Type", "Skill", "Details", "Video", "Preview"}, new JComponent[]{type, skill, scroller(d), vrow, pv}));
+        pv.stop(); if (!ok) return;
         String sk = String.valueOf(skill.getSelectedItem()).trim(); if (sk.isEmpty()) return;
         if (reel && pick[0] == null) { info("A reel needs a video - choose one and try again."); return; }
         Post po = new Post(); po.id = nextId(); po.author = me.username; po.type = type.getSelectedIndex() == 0 ? "OFFER" : "REQUEST"; po.skill = sk; po.category = cat(sk);

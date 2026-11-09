@@ -128,13 +128,33 @@ public class Videos {
             } catch (Exception e) { SwingUtilities.invokeLater(() -> fail.accept(nz(e.getMessage()).split("\n")[0])); }
         }, "video-download").start();
     }
-    public static void openExternal(File f) {
-        try { if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) { Desktop.getDesktop().open(f); return; } } catch (Exception e) { }
-        info("Could not open a video player automatically.\nThe video is saved at:\n" + f.getAbsolutePath());
-    }
-    /** In-app player: only available when VideoPlayerFX.class (and JavaFX) are present; otherwise null and we use the default player. */
+    /** In-app player: only available when VideoPlayerFX.class (and JavaFX) are present; otherwise null and the app shows a message. */
     public static JComponent fxPlayer(File f, int w, int h, Consumer<String> onFail) {
-        try { return (JComponent) Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("create", File.class, int.class, int.class, Consumer.class).invoke(null, f, w, h, onFail); } catch (Throwable t) { return null; }
+        Consumer<String> wrapped = why -> onFail.accept(friendly(why) + "  [" + diagnose(f) + "]");
+        try { return (JComponent) Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("create", File.class, int.class, int.class, Consumer.class).invoke(null, f, w, h, wrapped); } catch (Throwable t) { return null; }
+    }
+    /** Plain-English version of a JavaFX media error. */
+    static String friendly(String why) {
+        String w = nz(why);
+        if (w.contains("MEDIA_INVALID")) return "The player could not decode this file (its video/audio format is not supported, or the file is damaged).";
+        if (w.contains("UNSUPPORTED")) return "This video format is not supported by the player.";
+        if (w.contains("INACCESSIBLE") || w.contains("IO")) return "The video file could not be read.";
+        return w.split("\n")[0];
+    }
+    /** Looks inside an MP4/MOV and reports what it contains, e.g. "Video: H.264, audio: AAC", or what is wrong with the file. */
+    public static String diagnose(File f) {
+        try (RandomAccessFile r = new RandomAccessFile(f, "r")) {
+            long len = r.length(); if (len < 16) return "file is empty or too small";
+            int chunk = (int) Math.min(len, 6L * 1024 * 1024); byte[] head = new byte[chunk], tail = new byte[chunk];
+            r.seek(0); r.readFully(head); r.seek(len - chunk); r.readFully(tail);
+            String box = new String(head, 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1);
+            if (!java.util.Arrays.asList("ftyp", "moov", "mdat", "wide", "free", "skip").contains(box)) return "this does not look like a real MP4 file - it may be damaged or the upload was cut off";
+            String t = new String(head, java.nio.charset.StandardCharsets.ISO_8859_1) + new String(tail, java.nio.charset.StandardCharsets.ISO_8859_1);
+            if (!t.contains("moov")) return "the file has no index (moov) - it is incomplete, the upload may have been cut off";
+            String v = t.contains("hvc1") || t.contains("hev1") ? "H.265/HEVC" : t.contains("avc1") || t.contains("avc3") ? "H.264" : t.contains("av01") ? "AV1" : t.contains("vp09") ? "VP9" : t.contains("mp4v") ? "MPEG-4 Part 2" : "unknown";
+            String a = t.contains("mp4a") ? "AAC" : t.contains("ac-3") || t.contains("ec-3") ? "Dolby AC-3" : t.contains("Opus") ? "Opus" : t.contains("alac") ? "ALAC" : t.contains("samr") ? "AMR" : "none/unknown";
+            return "Video: " + v + ", audio: " + a + ", " + mb(len);
+        } catch (IOException e) { return "could not read the file"; }
     }
     public static JComponent fxPlayer(File f, int w, int h) {
         try { return (JComponent) Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("create", File.class, int.class, int.class).invoke(null, f, w, h); } catch (Throwable t) { return null; }
@@ -178,6 +198,66 @@ public class Videos {
         try { return (BufferedImage) Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("thumbnail", File.class, int.class, int.class).invoke(null, video, 640, 360); } catch (Throwable t) { return null; }
     }
 
+    /** Preview box for the New post / New reel dialog: plays the chosen video right there (in-app), so you can see what you are about to upload. */
+    public static class Preview extends JPanel {
+        JComponent cur; File shown;
+        public Preview() {
+            super(new GridBagLayout()); setBackground(Color.BLACK); setBorder(new LineBorder(INK, BW));
+            Dimension d = new Dimension(364, 207); setPreferredSize(d); setMinimumSize(d); msg("Your video preview appears here");
+        }
+        void put(JComponent c, boolean fill) { removeAll(); setLayout(fill ? new BorderLayout() : new GridBagLayout()); add(c); revalidate(); repaint(); }
+        void msg(String m) { put(lbl("<html><body style='width:300px;text-align:center'>" + esc(m) + "</body></html>", Font.PLAIN, 12, Color.WHITE), false); }
+        public void stop() { if (cur != null) { fxStop(cur); cur = null; } }
+        public void show(File f) {
+            stop(); shown = f; msg("Loading preview...");
+            JComponent fx = fxPlayer(f, 360, 203, why -> { if (shown != f) return; stop(); msg("This video can't be previewed or played in the app. " + nz(why).split("\n")[0]); });
+            if (fx != null) { cur = fx; put(fx, true); return; }
+            msg("The in-app player (JavaFX) is not available. Start the app with scripts\\run-dev.bat.");
+            new Thread(() -> { BufferedImage im = grabFrame(f); if (im == null) return;
+                SwingUtilities.invokeLater(() -> { if (shown != f) return; JLabel pic = new JLabel(new ImageIcon(im.getScaledInstance(360, -1, Image.SCALE_SMOOTH))); put(pic, false); }); }, "preview-frame").start();
+        }
+    }
+
+    /** Side panel for the "Choose video" file picker: click a file and its picture, size and format check appear before you pick it. */
+    public static class ChooserPreview extends JPanel implements java.beans.PropertyChangeListener {
+        static final ExecutorService pool = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "chooser-preview"); t.setDaemon(true); return t; });
+        final JPanel stage = new JPanel(new GridBagLayout()); final JLabel info = lbl(" ", Font.BOLD, 11, TXT), warn = lbl(" ", Font.PLAIN, 11, MUTED); final JButton play;
+        JComponent cur; File sel; int tok;
+        public ChooserPreview(JFileChooser fc) {
+            super(new BorderLayout(0, 8)); setBackground(PANEL); setBorder(new EmptyBorder(8, 10, 8, 10)); setPreferredSize(new Dimension(318, 0));
+            stage.setBackground(Color.BLACK); stage.setBorder(new LineBorder(INK, BW)); Dimension d = new Dimension(296, 166); stage.setPreferredSize(d); stage.setMinimumSize(d);
+            play = ghost("\u25B6  Play preview", () -> playNow()); play.setEnabled(false);
+            JPanel top = vbox(); put(top, lbl("Preview", Font.BOLD, 14, TXT)); gap(top, 6); put(top, stage); gap(top, 8); put(top, play);
+            JPanel bot = vbox(); gap(bot, 8); put(bot, info); gap(bot, 2); put(bot, warn);
+            JPanel col = new JPanel(new BorderLayout()); col.setOpaque(false); col.add(top, BorderLayout.NORTH); col.add(bot, BorderLayout.CENTER); add(col);
+            msg("Click a video file to see it here"); fc.addPropertyChangeListener(this);
+        }
+        void show(JComponent c, boolean fill) { stage.removeAll(); stage.setLayout(fill ? new BorderLayout() : new GridBagLayout()); stage.add(c); stage.revalidate(); stage.repaint(); }
+        void msg(String m) { show(lbl("<html><body style='width:250px;text-align:center'>" + esc(m) + "</body></html>", Font.PLAIN, 12, Color.WHITE), false); }
+        public void stop() { tok++; if (cur != null) { fxStop(cur); cur = null; } }
+        static boolean isVideo(File f) { String n = f.getName().toLowerCase(); return f.isFile() && (n.endsWith(".mp4") || n.endsWith(".mov") || n.endsWith(".m4v") || n.endsWith(".webm") || n.endsWith(".mkv") || n.endsWith(".avi")); }
+        public void propertyChange(java.beans.PropertyChangeEvent e) {
+            String p = e.getPropertyName();
+            if (JFileChooser.SELECTED_FILE_CHANGED_PROPERTY.equals(p)) load((File) e.getNewValue()); else if (JFileChooser.DIRECTORY_CHANGED_PROPERTY.equals(p)) load(null);
+        }
+        void load(File f) {
+            stop(); sel = f; final int my = tok;
+            if (f == null || !isVideo(f)) { info.setText(" "); warn.setText(" "); play.setEnabled(false); msg("Click a video file to see it here"); return; }
+            info.setText(f.getName() + "  (" + mb(f.length()) + ")"); String prob = playProblem(f); warn.setText(prob == null ? "Plays in the app" : "<html><body style='width:262px'>\u26A0 May not play in the app: " + esc(prob.replaceAll("\\s*\\(.*\\)", "")) + "</body></html>");
+            play.setEnabled(true); msg("Loading preview...");
+            pool.submit(() -> { BufferedImage im = grabFrame(f);
+                SwingUtilities.invokeLater(() -> { if (my != tok) return;
+                    if (im == null) { msg("No picture available for this file. Press Play preview."); return; }
+                    double sc = Math.min(292.0 / im.getWidth(), 166.0 / im.getHeight()); show(new JLabel(new ImageIcon(im.getScaledInstance(Math.max(1, (int) (im.getWidth() * sc)), Math.max(1, (int) (im.getHeight() * sc)), Image.SCALE_SMOOTH))), false); }); });
+        }
+        void playNow() {
+            if (sel == null) return; final File f = sel; tok++; final int my = tok;
+            JComponent fx = fxPlayer(f, 292, 166, why -> { if (my != tok) return; stop(); msg("Can't play this video in the app. " + nz(why).split("\n")[0]); });
+            if (fx == null) { msg("The in-app player (JavaFX) is not available. Start the app with scripts\\run-dev.bat."); return; }
+            cur = fx; show(fx, true);
+        }
+    }
+
     // ---- inline player: the video plays inside the post card itself ----
     public static JComponent inlineFx; public static int inlineTok; public static Runnable inlineRestore;
     public static void stopInline() {
@@ -190,8 +270,8 @@ public class Videos {
         inlineRestore = restore;
         String first = nz(why).split("\n")[0]; if (first.length() > 160) first = first.substring(0, 160) + "...";
         JPanel box = vbox(); put(box, lbl("This video can't be played inside the app.", Font.BOLD, 13, TXT));
-        put(box, lbl("<html><body style='width:260px'>" + esc(first) + "<br>Tip: use MP4 with H.264 video + AAC audio.</body></html>", Font.PLAIN, 11, MUTED)); gap(box, 6);
-        JPanel bar = row(); bar.add(ghost("Open in video player", () -> openExternal(file))); bar.add(ghost("Back", Videos::stopInline)); put(box, bar);
+        put(box, lbl("<html><body style='width:260px'>" + esc(first) + "<br>Tip: convert it to MP4 with H.264 video + AAC audio, then upload it again.</body></html>", Font.PLAIN, 11, MUTED)); gap(box, 6);
+        JPanel bar = row(); bar.add(ghost("Back", Videos::stopInline)); put(box, bar);
         holder.removeAll(); holder.add(box, BorderLayout.WEST); holder.revalidate(); holder.repaint();
     }
     public static JComponent inlineVideo(Post po) {
