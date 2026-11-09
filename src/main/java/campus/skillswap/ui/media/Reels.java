@@ -122,7 +122,7 @@ public class Reels {
         if (!po.desc.isEmpty()) { put(info, wrapLabel(po.desc, W, 13)); gap(info, 4); }
         put(info, lbl("#" + po.skill.replace(" ", "") + "  #" + po.category + "  #reel", Font.BOLD, 11, PINK)); main.add(info, BorderLayout.SOUTH);
 
-        withVideo(po, file -> { if (tok != reelTok) return; stage.removeAll(); stage.setLayout(new BorderLayout()); JComponent fx = fxPlayer(file, 360, 540);
+        withVideo(po, file -> { if (tok != reelTok) return; stage.removeAll(); stage.setLayout(new BorderLayout()); JComponent fx = fxPlayer(file, 360, 540, msg -> { if (tok != reelTok) return; if (reelFx != null) { fxStop(reelFx); reelFx = null; } stage.removeAll(); stage.add(reelPoster(po, file)); stage.revalidate(); stage.repaint(); });
                 if (fx != null) { reelFx = fx; stage.add(fx); } else stage.add(reelPoster(po, file)); stage.revalidate(); stage.repaint(); },
             err -> { if (tok != reelTok) return; stage.removeAll(); stage.add(lbl("<html><body style='width:300px'>Could not load video: " + esc(err) + "</body></html>", Font.PLAIN, 13, PINK)); stage.revalidate(); stage.repaint(); });
         return main;

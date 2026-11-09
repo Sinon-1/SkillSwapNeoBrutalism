@@ -28,16 +28,20 @@ import java.util.concurrent.TimeUnit;
  */
 public class VideoPlayerFX {
     /** Autoplaying, looping video. Click the video to pause / resume. */
-    public static JComponent create(File f, int w, int h) {
+    public static JComponent create(File f, int w, int h) { return create(f, w, h, msg -> openExternal(f)); }
+    /** Same, but on a playback error calls onFail(reason) on the Swing thread instead of switching to another app. */
+    public static JComponent create(File f, int w, int h, java.util.function.Consumer<String> onFail) {
         JFXPanel panel = new JFXPanel();                 // also starts the JavaFX runtime
         Platform.setImplicitExit(false);
         panel.setPreferredSize(new Dimension(w, h));
         Platform.runLater(() -> {
             try {
-                MediaPlayer mp = new MediaPlayer(new Media(f.toURI().toString()));
+                Media media = new Media(f.toURI().toString());
+                MediaPlayer mp = new MediaPlayer(media);
                 mp.setCycleCount(MediaPlayer.INDEFINITE);
                 mp.setAutoPlay(true);
-                mp.setOnError(() -> SwingUtilities.invokeLater(() -> openExternal(f)));
+                media.setOnError(() -> { String m = String.valueOf(media.getError()); SwingUtilities.invokeLater(() -> onFail.accept(m)); });
+                mp.setOnError(() -> { String m = String.valueOf(mp.getError()); SwingUtilities.invokeLater(() -> onFail.accept(m)); });
                 MediaView mv = new MediaView(mp);
                 mv.setPreserveRatio(true);
                 mv.setFitWidth(w);
@@ -48,7 +52,7 @@ public class VideoPlayerFX {
                 panel.setScene(new Scene(root, w, h, Color.BLACK));
                 panel.putClientProperty("mp", mp);
             } catch (Throwable t) {
-                SwingUtilities.invokeLater(() -> openExternal(f));
+                SwingUtilities.invokeLater(() -> onFail.accept(String.valueOf(t)));
             }
         });
         return panel;

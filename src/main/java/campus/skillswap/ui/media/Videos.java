@@ -119,6 +119,9 @@ public class Videos {
         info("Could not open a video player automatically.\nThe video is saved at:\n" + f.getAbsolutePath());
     }
     /** In-app player: only available when VideoPlayerFX.class (and JavaFX) are present; otherwise null and we use the default player. */
+    public static JComponent fxPlayer(File f, int w, int h, Consumer<String> onFail) {
+        try { return (JComponent) Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("create", File.class, int.class, int.class, Consumer.class).invoke(null, f, w, h, onFail); } catch (Throwable t) { return null; }
+    }
     public static JComponent fxPlayer(File f, int w, int h) {
         try { return (JComponent) Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("create", File.class, int.class, int.class).invoke(null, f, w, h); } catch (Throwable t) { return null; }
     }
@@ -167,6 +170,16 @@ public class Videos {
         inlineTok++; if (inlineFx != null) { fxStop(inlineFx); inlineFx = null; }
         if (inlineRestore != null) { Runnable r = inlineRestore; inlineRestore = null; r.run(); }
     }
+    /** Playback failed: stay in the app, say why, and let the person choose to open their own video player. */
+    static void failInline(JPanel holder, File file, String why, Runnable restore) {
+        if (inlineFx != null) { fxStop(inlineFx); inlineFx = null; }
+        inlineRestore = restore;
+        String first = nz(why).split("\n")[0]; if (first.length() > 160) first = first.substring(0, 160) + "...";
+        JPanel box = vbox(); put(box, lbl("This video can't be played inside the app.", Font.BOLD, 13, TXT));
+        put(box, lbl("<html><body style='width:260px'>" + esc(first) + "<br>Tip: use MP4 with H.264 video + AAC audio.</body></html>", Font.PLAIN, 11, MUTED)); gap(box, 6);
+        JPanel bar = row(); bar.add(ghost("Open in video player", () -> openExternal(file))); bar.add(ghost("Back", Videos::stopInline)); put(box, bar);
+        holder.removeAll(); holder.add(box, BorderLayout.WEST); holder.revalidate(); holder.repaint();
+    }
     public static JComponent inlineVideo(Post po) {
         JPanel holder = new JPanel(new BorderLayout()); holder.setOpaque(false);
         holder.add(videoTile(po, 260, 146, false, () -> playInline(po.id, holder)), BorderLayout.WEST); return holder;
@@ -179,8 +192,8 @@ public class Videos {
         holder.removeAll(); holder.add(lbl("Loading video...", Font.PLAIN, 12, MUTED), BorderLayout.WEST); holder.revalidate(); holder.repaint();
         withVideo(po, file -> {
             if (tok != inlineTok) return;
-            JComponent fx = fxPlayer(file, 480, 360);
-            if (fx == null) { inlineRestore = null; restore.run(); openExternal(file); return; }   // no JavaFX: use the default player
+            JComponent fx = fxPlayer(file, 480, 360, msg -> { if (tok == inlineTok) failInline(holder, file, msg, restore); });
+            if (fx == null) { failInline(holder, file, "The in-app player (JavaFX) is not available. Start the app with scripts\\run-dev.bat.", restore); return; }
             inlineFx = fx; JPanel box = new JPanel(new BorderLayout(0, 4)); box.setOpaque(false); box.add(fx);
             JPanel bar = row(); bar.add(ghost("\u2715 Close video", Videos::stopInline)); bar.add(lbl("Click the video to pause / resume", Font.PLAIN, 11, MUTED)); box.add(bar, BorderLayout.SOUTH);
             holder.removeAll(); holder.add(box, BorderLayout.WEST); holder.revalidate(); holder.repaint();
