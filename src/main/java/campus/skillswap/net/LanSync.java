@@ -103,8 +103,8 @@ public class LanSync {
                 finally { peers.remove(out); }
             } else if (kind == 'P') {
                 int id = in.readInt(); long len = in.readLong(); if (len < 0 || len > MAX_VID) throw new IOException("Video too large");
-                Files.createDirectories(VID); Path tmp = VID.resolve(id + ".part");
-                try (OutputStream o = Files.newOutputStream(tmp)) { copyN(in, o, len); }
+                Files.createDirectories(VID); Path tmp;
+                tmp = VID.resolve(id + "." + System.nanoTime() + ".part"); try (OutputStream o = Files.newOutputStream(tmp)) { copyN(in, o, len); } catch (IOException ex) { Files.deleteIfExists(tmp); throw ex; }
                 Files.move(tmp, VID.resolve(id + ".bin"), StandardCopyOption.REPLACE_EXISTING); out.writeInt(1); out.flush();
             } else if (kind == 'G') {
                 int id = in.readInt(); Path p = VID.resolve(id + ".bin");
@@ -185,7 +185,7 @@ public class LanSync {
     /** Apply waiting changes; if a dialog is open or a video is playing, wait (retried every second). */
     static void flush(boolean force) {
         if (pending.isEmpty()) return;
-        if (!force && (busy > 0 || (inlineFx != null && page.equals("Feed")))) return;
+        if (!force && (busy > 0 || videoOpen())) return;
         List<Delta> ds = new ArrayList<>(pending); pending.clear();
         Map<Integer, String> old = new HashMap<>(); for (Sess s : S.sessions) old.put(s.id, s.status);
         long cutoff = lastMsgSeen;
@@ -208,7 +208,7 @@ public class LanSync {
 
     // ---------- reel videos ----------
     public static void putVideo(int postId, File f) throws IOException {
-        if (mode.equals("host")) { Files.createDirectories(VID); Files.copy(f.toPath(), VID.resolve(postId + ".bin"), StandardCopyOption.REPLACE_EXISTING); return; }
+        if (mode.equals("host")) { Files.createDirectories(VID); Path t = VID.resolve(postId + "." + System.nanoTime() + ".part"); Files.copy(f.toPath(), t); Files.move(t, VID.resolve(postId + ".bin"), StandardCopyOption.REPLACE_EXISTING); return; }
         try (Socket s = new Socket()) {
             s.connect(new InetSocketAddress(peerHost, peerPort), 4000); s.setSoTimeout(60000);
             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(s.getOutputStream())); DataInputStream in = new DataInputStream(s.getInputStream());

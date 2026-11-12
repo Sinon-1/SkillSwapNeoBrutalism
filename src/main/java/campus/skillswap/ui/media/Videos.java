@@ -101,14 +101,27 @@ public class Videos {
     }
     /** Download (once) to ~/.skillswap/cache, then hand the local file to the callback on the EDT. */
     public static void withVideo(Post po, Consumer<File> ok, Consumer<String> fail) { if (LanSync.active()) withVideoLan(po, ok, fail); else withVideoPg(po, ok, fail); }
+    static final Map<Integer, Object> DL_LOCKS = new ConcurrentHashMap<>();
+    /** True while a video player is on screen (inline or full-screen reels): incoming LAN/DB changes must not rebuild the UI then. */
+    public static boolean videoOpen() { return inlineFx != null || Reels.reelDlg != null; }
     static void withVideoLan(Post po, Consumer<File> ok, Consumer<String> fail) {
         final int id = po.id; final long size = po.videoSize;
         final Path dir = DIR.resolve("cache"), file = dir.resolve("video_" + id + "_" + po.videoName.replaceAll("[^A-Za-z0-9._-]", "_"));
         try { if (Files.exists(file) && Files.size(file) == size) { ok.accept(file.toFile()); return; } } catch (IOException e) { /* download again */ }
         new Thread(() -> {
-            try { Files.createDirectories(dir); Path tmp = dir.resolve(file.getFileName() + ".part"); LanSync.getVideo(id, tmp); Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
-                SwingUtilities.invokeLater(() -> ok.accept(file.toFile()));
-            } catch (Exception e) { SwingUtilities.invokeLater(() -> fail.accept(nz(e.getMessage()).split("\n")[0])); }
+            synchronized (DL_LOCKS.computeIfAbsent(id, k -> new Object())) {       // one download per video at a time (double clicks, thumbnail + play)
+                try {
+                    Files.createDirectories(dir);
+                    if (!(Files.exists(file) && Files.size(file) == size)) {
+                        Path tmp = dir.resolve(file.getFileName() + "." + System.nanoTime() + ".part");
+                        try { LanSync.getVideo(id, tmp); long got = Files.size(tmp);
+                            if (size > 0 && got != size) throw new IOException("Video download was incomplete (" + mb(got) + " of " + mb(size) + "). Try again.");
+                            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+                        } finally { try { Files.deleteIfExists(tmp); } catch (IOException e) { } }
+                    }
+                    SwingUtilities.invokeLater(() -> ok.accept(file.toFile()));
+                } catch (Throwable e) { SwingUtilities.invokeLater(() -> fail.accept(nz(e.getMessage()).split("\n")[0])); }
+            }
         }, "video-download").start();
     }
     static void withVideoPg(Post po, Consumer<File> ok, Consumer<String> fail) {
