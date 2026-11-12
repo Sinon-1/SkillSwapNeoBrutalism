@@ -67,12 +67,12 @@ public class Seed {
         p.desc = desc; p.time = System.currentTimeMillis() - (long) (Math.random() * 6e6); for (int i = 0; i < (int) (Math.random() * 7); i++) p.likes.add("seed" + i); S.posts.add(p);
     }
     public static void seed() {
-        addUser("ramos", "Dr. Ramos", "demo", new String[]{"Java", "Python", "Calculus"}, new String[]{"Guitar"}, true, "Senior Programmer Major");
-        addUser("alamag", "Dr. Alamag", "demo", new String[]{"Guitar", "Piano"}, new String[]{"Python"}, true, "Conservatory Junior");
+        addUser("ramos", "Dr. Ramos", "demo", new String[]{"Java", "Python", "Calculus"}, new String[]{"Guitar"}, false, "Senior Programmer Major");
+        addUser("alamag", "Dr. Alamag", "demo", new String[]{"Guitar", "Piano"}, new String[]{"Python"}, false, "Conservatory Junior");
         addUser("henry", "Dr. Henry Flores", "demo", new String[]{"Statistics", "Russian"}, new String[]{"Painting"}, false, "Math & Linguistics");
         addUser("jeb", "Dr. Jeb Ramos", "demo", new String[]{"Painting", "Cooking"}, new String[]{"Java"}, false, "Fine Arts Sophomore");
         addUser("chinu", "Dr. Chinu Po", "demo", new String[]{"Calculus", "Physics"}, new String[]{"Russian"}, false, "Physics Senior");
-        addUser("dino", "Dr. Dino Ran", "demo", new String[]{"Python", "Guitar"}, new String[]{"Calculus"}, true, "CS Junior");
+        addUser("dino", "Dr. Dino Ran", "demo", new String[]{"Python", "Guitar"}, new String[]{"Calculus"}, false, "CS Junior");
         addUser("jamesa", "James A.", "demo", new String[]{"Spanish"}, new String[]{"Java"}, false, "");
         addUser("kylet", "Kyle T.", "demo", new String[]{"Drawing"}, new String[]{"Python"}, false, "");
         String[] rev = {"Super patient and clear.", "Explained recursion perfectly.", "Great session, very organized.", "Would swap again!"};

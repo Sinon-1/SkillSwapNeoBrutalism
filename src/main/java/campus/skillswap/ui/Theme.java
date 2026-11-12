@@ -212,6 +212,31 @@ public class Theme {
     }
     public static JTextField field() { return styleInput(new NField(), 7, 10); }
     public static JPasswordField pass() { return styleInput(new NPass(), 7, 10); }
+    /** Password field with a chunky eye button on its right edge that shows / hides the typed text. */
+    public static JPanel passRow(JPasswordField p) {
+        final char dot = p.getEchoChar();
+        JPanel row = new JPanel(new BorderLayout()) { public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE, getPreferredSize().height); } };
+        row.setBackground(FIELD); row.setBorder(new LineBorder(INK, BW));
+        p.setBorder(new EmptyBorder(7, 10, 7, 10));
+        JToggleButton eye = new JToggleButton() {
+            protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create(); aa(g); int w = getWidth(), h = getHeight();
+                g.setColor(isSelected() ? YEL : getModel().isRollover() ? PANEL2 : FIELD); g.fillRect(0, 0, w, h);
+                g.setColor(INK); g.fillRect(0, 0, BW, h);
+                int cx = (w + BW) / 2, cy = h / 2;
+                g.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                java.awt.geom.Path2D.Float eyeShape = new java.awt.geom.Path2D.Float();
+                eyeShape.moveTo(cx - 10, cy); eyeShape.quadTo(cx, cy - 11, cx + 10, cy); eyeShape.quadTo(cx, cy + 11, cx - 10, cy);
+                Color ink = isSelected() ? ONACC : INK; g.setColor(ink); g.draw(eyeShape); g.fillOval(cx - 3, cy - 3, 6, 6);
+                if (!isSelected()) g.drawLine(cx - 9, cy + 9, cx + 9, cy - 9);   // slashed = hidden
+                g.dispose();
+            }
+        };
+        eye.setPreferredSize(new Dimension(40, 10)); eye.setFocusable(false); eye.setContentAreaFilled(false); eye.setBorderPainted(false); eye.setRolloverEnabled(true);
+        eye.setCursor(new Cursor(Cursor.HAND_CURSOR)); eye.setToolTipText("Show password");
+        eye.addActionListener(e -> { boolean on = eye.isSelected(); p.setEchoChar(on ? (char) 0 : dot); eye.setToolTipText(on ? "Hide password" : "Show password"); });
+        row.add(p, BorderLayout.CENTER); row.add(eye, BorderLayout.EAST); return row;
+    }
     public static JTextArea area(int rows, int cols) { JTextArea t = styleInput(new JTextArea(rows, cols), 6, 8); t.setLineWrap(true); t.setWrapStyleWord(true); return t; }
     public static JScrollPane scroller(JComponent c) { JScrollPane s = new JScrollPane(c); s.setBorder(new LineBorder(INK, BW)); return s; }
     public static JTextField searchField(String hint) {

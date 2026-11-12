@@ -57,10 +57,10 @@ public class NearbyScreen {
         Pg p = pg("Nearby Now", "Students currently open to an impromptu swap", null);
         JCheckBox me2 = check("I'm open to an impromptu swap right now", me.nearby); me2.addActionListener(e -> { me.nearby = me2.isSelected(); save(); show("Nearby"); });
         JPanel c0 = card(); c0.add(me2); put(p.body, c0); gap(p.body, 8); int n = 0;
-        for (User u : S.users.values()) if (u != me && u.nearby) { n++; JPanel c = card(); c.add(avatarWrap(name(u), 40), BorderLayout.WEST); JPanel inf = vbox(); JPanel h = row();
-            h.add(lbl(name(u), Font.BOLD, 13, TXT)); h.add(tag("\u25CF ONLINE", GREEN)); put(inf, h); put(inf, lbl("Teaches: " + String.join(", ", u.teach) + "   \u2022   Wants: " + String.join(", ", u.learn), Font.PLAIN, 12, MUTED)); c.add(inf);
+        for (User u : S.users.values()) if (u != me && campus.skillswap.service.Presence.isNearby(u)) { n++; JPanel c = card(); c.add(avatarWrap(name(u), 40), BorderLayout.WEST); JPanel inf = vbox(); JPanel h = row();
+            h.add(lbl(name(u), Font.BOLD, 13, TXT)); h.add(tag("\u25CF ONLINE NOW", GREEN)); put(inf, h); put(inf, lbl("Teaches: " + String.join(", ", u.teach) + "   \u2022   Wants: " + String.join(", ", u.learn), Font.PLAIN, 12, MUTED)); c.add(inf);
             JPanel b = row(); if (!u.teach.isEmpty()) b.add(btn("SWAP NOW", () -> book(u.username, me.username, u.teach.get(0)))); b.add(ghost("Message", () -> { chatWith = u.username; show("Messages"); })); c.add(b, BorderLayout.EAST); put(p.body, c); gap(p.body, 8); }
-        if (n == 0) put(p.body, lbl("Nobody else is open right now. Check back soon!", Font.PLAIN, 12, MUTED));
+        if (n == 0) put(p.body, lbl("Nobody else is online and open to a swap right now. Check back soon!", Font.PLAIN, 12, MUTED));
         return p.root;
     }
 }

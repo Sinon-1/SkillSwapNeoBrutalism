@@ -89,7 +89,7 @@ public class LoginScreen {
         JPanel sp = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0)); sp.setOpaque(false); sp.add(lbl("Swap skills. Learn from your peers.", Font.PLAIN, 13, MUTED)); put(c, sp); gap(c, 14);
         JPanel icons = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 0)); icons.setOpaque(false); for (int i = 0; i < 3; i++) icons.add(iconTile(i)); put(c, icons); gap(c, 18);
         JTextField u = field(); JPasswordField p = pass();
-        put(c, lbl("Username or school email", Font.BOLD, 12, TXT)); gap(c, 4); put(c, u); gap(c, 10); put(c, lbl("Password", Font.BOLD, 12, TXT)); gap(c, 4); put(c, p); gap(c, 4);
+        put(c, lbl("Username or school email", Font.BOLD, 12, TXT)); gap(c, 4); put(c, u); gap(c, 10); put(c, lbl("Password", Font.BOLD, 12, TXT)); gap(c, 4); put(c, passRow(p)); gap(c, 4);
         JButton forgot = ghost("<html><u>Forgot password?</u></html>", LoginScreen::forgot); ((RBtn) forgot).flat(true); forgot.setBackground(PANEL); forgot.setFont(f(Font.BOLD, 11));
         JPanel fr = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0)); fr.setOpaque(false); fr.add(forgot); put(c, fr); gap(c, 8);
         Runnable go = () -> {
@@ -110,20 +110,59 @@ public class LoginScreen {
         bg.add(c); return bg;
     }
     public static void enter(User u) {
-        me = u; page = "Feed"; lastMsgSeen = System.currentTimeMillis(); draft = ""; chatWith = null; rootCards.show(root, "app"); show("Feed"); checkReminders();
+        me = u; if (u.nearby) { u.nearby = false; save(); } campus.skillswap.service.Presence.beat(); page = "Feed"; lastMsgSeen = System.currentTimeMillis(); draft = ""; chatWith = null; rootCards.show(root, "app"); show("Feed"); checkReminders();
         notifyUser("Welcome, " + name(u), "You have " + u.credits + " swap credits.");
+    }
+    /** Small stacked label + input used by the account dialogs. */
+    static JPanel labeled(String text, JComponent c) {
+        JPanel p = vbox(); put(p, lbl(text, Font.BOLD, 12, TXT)); gap(p, 4); put(p, c); return p;
+    }
+    static JPanel pair(JComponent a, JComponent b) {
+        JPanel p = new JPanel(new GridLayout(1, 2, 14, 0)) { public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE, getPreferredSize().height); } };
+        p.setOpaque(false); p.add(a); p.add(b); return p;
+    }
+    /**
+     * Neobrutalist modal dialog: coloured header band, body, inline error line and CANCEL / OK buttons.
+     * {@code validate} runs when OK is pressed; a non-null result is shown inside the dialog (which stays open, so nothing typed is lost).
+     */
+    static boolean dialog(String title, String sub, Color band, JComponent body, String okText, java.util.function.Supplier<String> validate) {
+        JDialog d = new JDialog(frame, title, true); final boolean[] ok = {false};
+        JPanel outer = new JPanel(new BorderLayout()); outer.setBackground(BG); outer.setBorder(new EmptyBorder(16, 16, 12, 12));
+        Card card = new Card(); card.setLayout(new BorderLayout()); card.setBorder(new EmptyBorder(0, 0, 0, 0)); card.setBackground(PANEL);
+        JPanel head = new JPanel(); head.setLayout(new BoxLayout(head, BoxLayout.Y_AXIS)); head.setBackground(band); head.setBorder(new CompoundBorder(new MatteBorder(0, 0, CB, 0, INK), new EmptyBorder(14, 24, 12, 24)));
+        JLabel t = lbl(title.toUpperCase(), Font.BOLD, 24, ONACC), st = lbl(sub, Font.PLAIN, 12, ONACC); put(head, t); gap(head, 2); put(head, st);
+        JPanel mid = vbox(); mid.setBorder(new EmptyBorder(16, 24, 4, 24)); mid.setOpaque(false); mid.add(body);
+        JLabel err = lbl(" ", Font.BOLD, 12, PINKT); put(mid, err); gap(mid, 6);
+        JPanel foot = new JPanel(new FlowLayout(FlowLayout.RIGHT, 12, 0)); foot.setOpaque(false); foot.setBorder(new EmptyBorder(4, 24, 14, 20));
+        JButton cancel = ghost("CANCEL", d::dispose), go = btn(okText, () -> {
+            String e = validate == null ? null : validate.get();
+            if (e != null) { err.setText("\u26A0 " + e); d.pack(); return; }
+            ok[0] = true; d.dispose(); });
+        for (JButton b : new JButton[]{cancel, go}) { b.setFont(f(Font.BOLD, 13)); b.setBorder(new EmptyBorder(9, 18, 9, 18)); foot.add(b); }
+        card.add(head, BorderLayout.NORTH); card.add(mid, BorderLayout.CENTER); card.add(foot, BorderLayout.SOUTH);
+        outer.add(card); d.setContentPane(outer); d.getRootPane().setDefaultButton(go);
+        d.getRootPane().registerKeyboardAction(e -> d.dispose(), KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
+        d.setResizable(false); d.pack(); d.setLocationRelativeTo(frame);
+        busy++; try { d.setVisible(true); } finally { busy--; }
+        return ok[0];
     }
     public static void register() {
         JTextField em = field(), un = field(), rn = field(); JPasswordField p1 = pass(), p2 = pass();
         JCheckBox real = check("Show my real name publicly (otherwise username)", false), pub = check("Make my ratings public", true);
-        JPanel f = form(new String[]{"School email", "Username", "Real name", "Password", "Confirm", "", ""}, new JComponent[]{em, un, rn, p1, p2, real, pub});
-        f.setPreferredSize(new Dimension(420, 270));
-        if (!ask("Create account", f)) return;
-        String email = em.getText().trim().toLowerCase(), user = un.getText().trim(), pw = new String(p1.getPassword());
-        String err = !email.matches("^[\\w.+-]+@[\\w.-]*edu[\\w.-]*$") ? "Please use your school email (a domain containing .edu)."
+        real.setBorder(null); pub.setBorder(null); real.setMargin(new Insets(0, 0, 0, 0)); pub.setMargin(new Insets(0, 0, 0, 0));
+        JPanel b = vbox();
+        put(b, labeled("School email", em)); gap(b, 10);
+        put(b, pair(labeled("Username", un), labeled("Real name", rn))); gap(b, 10);
+        put(b, pair(labeled("Password", passRow(p1)), labeled("Confirm password", passRow(p2)))); gap(b, 4);
+        put(b, lbl("At least 6 characters. Use the eye to check what you typed.", Font.PLAIN, 11, MUTED)); gap(b, 12);
+        put(b, real); gap(b, 6); put(b, pub);
+        b.setPreferredSize(new Dimension(500, b.getPreferredSize().height));
+        if (!dialog("Create account", "Join SkillSwap with your school email", YEL, b, "CREATE ACCOUNT", () -> {
+            String email = em.getText().trim().toLowerCase(), user = un.getText().trim(), pw = new String(p1.getPassword());
+            return !email.matches("^[\\w.+-]+@[\\w.-]*edu[\\w.-]*$") ? "Please use your school email (a domain containing .edu)."
                 : user.length() < 3 ? "Username must be at least 3 characters." : S.users.keySet().stream().anyMatch(x -> x.equalsIgnoreCase(user)) || S.users.values().stream().anyMatch(x -> x.email.equals(email)) ? "That username or email is already registered."
-                : pw.length() < 6 ? "Password must be at least 6 characters." : !pw.equals(new String(p2.getPassword())) ? "Passwords do not match." : null;
-        if (err != null) { JOptionPane.showMessageDialog(frame, err, "Cannot create account", JOptionPane.WARNING_MESSAGE); return; }
+                : pw.length() < 6 ? "Password must be at least 6 characters." : !pw.equals(new String(p2.getPassword())) ? "Passwords do not match." : null; })) return;
+        String email = em.getText().trim().toLowerCase(), user = un.getText().trim(), pw = new String(p1.getPassword());
         String code = String.format("%06d", new Random().nextInt(1000000)); notifyUser("SkillSwap verification", "Your code is " + code);
         String in = JOptionPane.showInputDialog(frame, "Enter the 6-digit code sent to " + email + "\n(Demo: no mail server is configured - your code is " + code + ")");
         if (in == null || !in.trim().equals(code)) { info("Verification failed. Account not created."); return; }
@@ -132,7 +171,7 @@ public class LoginScreen {
     }
     public static void forgot() {
         JTextField em = field(); JPasswordField np = pass();
-        if (!ask("Reset password", form(new String[]{"School email", "New password"}, new JComponent[]{em, np}))) return;
+        if (!ask("Reset password", form(new String[]{"School email", "New password"}, new JComponent[]{em, passRow(np)}))) return;
         User u = S.users.values().stream().filter(x -> x.email.equalsIgnoreCase(em.getText().trim())).findFirst().orElse(null);
         if (u == null || np.getPassword().length < 6) { info("Email not found, or password shorter than 6 characters."); return; }
         String code = String.format("%06d", new Random().nextInt(1000000));

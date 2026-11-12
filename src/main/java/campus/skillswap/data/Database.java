@@ -66,6 +66,7 @@ public class Database {
         "CREATE TABLE IF NOT EXISTS users(ord BIGSERIAL, username TEXT PRIMARY KEY, real_name TEXT NOT NULL DEFAULT '', email TEXT NOT NULL UNIQUE,"
             + " pass_hash TEXT NOT NULL, bio TEXT NOT NULL DEFAULT '', use_real_name BOOLEAN NOT NULL DEFAULT FALSE, public_ratings BOOLEAN NOT NULL DEFAULT TRUE,"
             + " nearby BOOLEAN NOT NULL DEFAULT FALSE, demo BOOLEAN NOT NULL DEFAULT FALSE, credits INT NOT NULL DEFAULT 5)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen BIGINT NOT NULL DEFAULT 0",
         "CREATE TABLE IF NOT EXISTS user_skills(ord BIGSERIAL, username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,"
             + " kind CHAR(1) NOT NULL, skill TEXT NOT NULL, PRIMARY KEY(username, kind, skill))",
         "CREATE TABLE IF NOT EXISTS posts(id INT PRIMARY KEY, author TEXT NOT NULL, post_type TEXT NOT NULL, skill TEXT NOT NULL,"
@@ -75,10 +76,16 @@ public class Database {
         "CREATE TABLE IF NOT EXISTS sessions(id INT PRIMARY KEY, teacher TEXT NOT NULL, learner TEXT NOT NULL, skill TEXT NOT NULL, sess_mode TEXT NOT NULL,"
             + " status TEXT NOT NULL, requester TEXT NOT NULL, review TEXT NOT NULL DEFAULT '', rating INT NOT NULL DEFAULT 0, starts_at TIMESTAMP NOT NULL)",
         "CREATE TABLE IF NOT EXISTS messages(id INT PRIMARY KEY, from_user TEXT NOT NULL, to_user TEXT NOT NULL, body TEXT NOT NULL, created BIGINT NOT NULL)",
+        "ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE messages ADD COLUMN IF NOT EXISTS hidden_by TEXT NOT NULL DEFAULT ''",
         "CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(from_user, to_user, created)",
         "CREATE TABLE IF NOT EXISTS reports(id INT PRIMARY KEY, by_user TEXT NOT NULL, target TEXT NOT NULL, reason TEXT NOT NULL,"
             + " details TEXT NOT NULL DEFAULT '', created BIGINT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT NOT NULL)"
+        "CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS call_signals(id BIGSERIAL PRIMARY KEY, call_id TEXT NOT NULL, from_user TEXT NOT NULL, to_user TEXT NOT NULL, kind TEXT NOT NULL,"
+            + " host TEXT NOT NULL DEFAULT '', port INT NOT NULL DEFAULT 0, video BOOLEAN NOT NULL DEFAULT FALSE, ts BIGINT NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS idx_call_signals_to ON call_signals(to_user, id)"
     };
 
     public static String nz(String s) { return s == null ? "" : s; }
@@ -110,9 +117,9 @@ public class Database {
         synchronized (RL) {
             Store st = new Store();
             try (Statement s = dbRead.createStatement()) {
-                try (ResultSet r = s.executeQuery("SELECT username,real_name,email,pass_hash,bio,use_real_name,public_ratings,nearby,demo,credits FROM users ORDER BY ord")) {
+                try (ResultSet r = s.executeQuery("SELECT username,real_name,email,pass_hash,bio,use_real_name,public_ratings,nearby,demo,credits,last_seen FROM users ORDER BY ord")) {
                     while (r.next()) { User u = new User(); u.username = r.getString(1); u.realName = nz(r.getString(2)); u.email = r.getString(3); u.passHash = r.getString(4); u.bio = nz(r.getString(5));
-                        u.useRealName = r.getBoolean(6); u.publicRatings = r.getBoolean(7); u.nearby = r.getBoolean(8); u.demo = r.getBoolean(9); u.credits = r.getInt(10); st.users.put(u.username, u); } }
+                        u.useRealName = r.getBoolean(6); u.publicRatings = r.getBoolean(7); u.nearby = r.getBoolean(8); u.demo = r.getBoolean(9); u.credits = r.getInt(10); u.lastSeen = r.getLong(11); st.users.put(u.username, u); } }
                 try (ResultSet r = s.executeQuery("SELECT username,kind,skill FROM user_skills ORDER BY ord")) {
                     while (r.next()) { User u = st.users.get(r.getString(1)); if (u != null) (r.getString(2).equals("T") ? u.teach : u.learn).add(r.getString(3)); } }
                 try (ResultSet r = s.executeQuery("SELECT id,author,post_type,skill,category,descr,created FROM posts ORDER BY id")) {
@@ -123,8 +130,8 @@ public class Database {
                 try (ResultSet r = s.executeQuery("SELECT id,teacher,learner,skill,sess_mode,status,requester,review,rating,starts_at FROM sessions ORDER BY id")) {
                     while (r.next()) { Sess x = new Sess(); x.id = r.getInt(1); x.teacher = r.getString(2); x.learner = r.getString(3); x.skill = r.getString(4); x.mode = r.getString(5); x.status = r.getString(6);
                         x.requester = r.getString(7); x.review = nz(r.getString(8)); x.rating = r.getInt(9); x.at = r.getTimestamp(10).toLocalDateTime(); st.sessions.add(x); } }
-                try (ResultSet r = s.executeQuery("SELECT id,from_user,to_user,body,created FROM messages ORDER BY created,id")) {
-                    while (r.next()) { Msg m = new Msg(); m.id = r.getInt(1); m.from = r.getString(2); m.to = r.getString(3); m.text = r.getString(4); m.time = r.getLong(5); st.msgs.add(m); } }
+                try (ResultSet r = s.executeQuery("SELECT id,from_user,to_user,body,created,edited,deleted,hidden_by FROM messages ORDER BY created,id")) {
+                    while (r.next()) { Msg m = new Msg(); m.id = r.getInt(1); m.from = r.getString(2); m.to = r.getString(3); m.text = r.getString(4); m.time = r.getLong(5); m.edited = r.getBoolean(6); m.deleted = r.getBoolean(7); m.hiddenBy = nz(r.getString(8)); st.msgs.add(m); } }
                 try (ResultSet r = s.executeQuery("SELECT id,by_user,target,reason,details,created FROM reports ORDER BY id")) {
                     while (r.next()) { Report x = new Report(); x.id = r.getInt(1); x.by = r.getString(2); x.target = r.getString(3); x.reason = r.getString(4); x.details = nz(r.getString(5)); x.time = r.getLong(6); st.reports.add(x); } }
                 try (ResultSet r = s.executeQuery("SELECT v FROM meta WHERE k='last_sync'")) { if (r.next()) st.lastSync = r.getString(1); }
@@ -139,7 +146,7 @@ public class Database {
         for (User u : st.users.values()) m.put("u:" + u.username, j(nz(u.realName), u.email, u.passHash, nz(u.bio), u.useRealName, u.publicRatings, u.nearby, u.demo, u.credits, String.join("\u0002", u.teach), String.join("\u0002", u.learn)));
         for (Post p : st.posts) m.put("p:" + p.id, pfp(p));
         for (Sess s : st.sessions) m.put("s:" + s.id, j(s.teacher, s.learner, s.skill, s.mode, s.status, s.requester, nz(s.review), s.rating, s.at.truncatedTo(ChronoUnit.SECONDS)));
-        for (Msg x : st.msgs) m.put("m:" + x.id, "");
+        for (Msg x : st.msgs) m.put("m:" + x.id, j(x.text, x.edited, x.deleted, nz(x.hiddenBy)));
         for (Report x : st.reports) m.put("r:" + x.id, "");
         m.put("meta:sync", st.lastSync);
         return m;
@@ -199,8 +206,10 @@ public class Database {
         }
     }
     public static void writeMsg(Msg m) throws SQLException {
-        try (PreparedStatement p = db.prepareStatement("INSERT INTO messages(id,from_user,to_user,body,created) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING")) {
-            p.setInt(1, m.id); p.setString(2, m.from); p.setString(3, m.to); p.setString(4, m.text); p.setLong(5, m.time); p.executeUpdate();
+        try (PreparedStatement p = db.prepareStatement("INSERT INTO messages(id,from_user,to_user,body,created,edited,deleted,hidden_by) VALUES(?,?,?,?,?,?,?,?) "
+                + "ON CONFLICT(id) DO UPDATE SET body=EXCLUDED.body,edited=EXCLUDED.edited,deleted=EXCLUDED.deleted,hidden_by=EXCLUDED.hidden_by")) {
+            p.setInt(1, m.id); p.setString(2, m.from); p.setString(3, m.to); p.setString(4, nz(m.text)); p.setLong(5, m.time);
+            p.setBoolean(6, m.edited); p.setBoolean(7, m.deleted); p.setString(8, nz(m.hiddenBy)); p.executeUpdate();
         }
     }
     public static void writeReport(Report r) throws SQLException {

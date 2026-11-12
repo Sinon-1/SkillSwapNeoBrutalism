@@ -41,9 +41,11 @@ public class LanSync {
 
     /** The changed rows of one save. */
     public static class Delta implements Serializable {
+        private static final long serialVersionUID = 1L;
         List<User> users = new ArrayList<>(); List<Post> posts = new ArrayList<>(); List<Sess> sessions = new ArrayList<>();
-        List<Msg> msgs = new ArrayList<>(); List<Report> reports = new ArrayList<>(); List<Integer> delPosts = new ArrayList<>(); String lastSync;
-        boolean empty() { return users.isEmpty() && posts.isEmpty() && sessions.isEmpty() && msgs.isEmpty() && reports.isEmpty() && delPosts.isEmpty() && lastSync == null; }
+        List<Msg> msgs = new ArrayList<>(); List<Report> reports = new ArrayList<>(); List<Integer> delPosts = new ArrayList<>(); String lastSync; Map<String, Long> seen = new HashMap<>(); List<CallSig> sig = new ArrayList<>();
+        boolean empty() { return users.isEmpty() && posts.isEmpty() && sessions.isEmpty() && msgs.isEmpty() && reports.isEmpty() && delPosts.isEmpty() && lastSync == null && seen.isEmpty(); }
+        boolean presenceOnly() { return users.isEmpty() && posts.isEmpty() && sessions.isEmpty() && msgs.isEmpty() && reports.isEmpty() && delPosts.isEmpty() && lastSync == null && !seen.isEmpty(); }
     }
 
     public static boolean active() { return !mode.equals("off"); }
@@ -167,8 +169,31 @@ public class LanSync {
         if (mode.equals("host")) { persist(); relay(b, null); } else sendUp(b);
     }
 
+    /** Heartbeat / sign-out: tiny delta that only carries a "last seen" time. */
+    public static void presence(String user, long ts, boolean sync) {
+        Delta d = new Delta(); d.seen.put(user, ts); byte[] b = pack(d);
+        if (mode.equals("host")) { relay(b, null); return; }
+        DataOutputStream o = cout; if (o == null) return;
+        if (!sync) { sendUp(b); return; }
+        try { synchronized (o) { o.writeInt(b.length); o.write(b); o.flush(); } } catch (IOException e) { /* closing anyway */ }
+    }
+
+    /** Call setup message (ring / decline / hang up) for another user; goes out immediately and is never stored. */
+    public static void signal(CallSig s) {
+        Delta d = new Delta(); d.sig.add(s); byte[] b = pack(d);
+        if (mode.equals("host")) relay(b, null); else sendUp(b);
+    }
+    /** The local address of this computer on the network it uses to reach the host. */
+    public static InetAddress localAddr() {
+        try { if (mode.equals("client") && csock != null) return csock.getLocalAddress(); } catch (Exception e) { }
+        return null;
+    }
+
     // ---------- applying changes that arrived from others ----------
-    static void onDelta(Delta d) { pending.add(d); flush(false); }
+    static void onDelta(Delta d) {
+        if (!d.sig.isEmpty()) { for (CallSig s : d.sig) campus.skillswap.service.Calls.onSignal(s); return; }      // call setup: never wait for dialogs
+        pending.add(d); flush(false);
+    }
     static <T> void upsert(List<T> l, T x, ToIntFunction<T> id) {
         for (int i = 0; i < l.size(); i++) if (id.applyAsInt(l.get(i)) == id.applyAsInt(x)) { l.set(i, x); return; }
         l.add(x);
@@ -179,6 +204,7 @@ public class LanSync {
         for (Sess s : d.sessions) upsert(S.sessions, s, x -> x.id);
         for (Msg m : d.msgs) upsert(S.msgs, m, x -> x.id);
         for (Report r : d.reports) upsert(S.reports, r, x -> x.id);
+        for (Map.Entry<String, Long> e : d.seen.entrySet()) { User u = S.users.get(e.getKey()); if (u != null && (me == null || u != me)) u.lastSeen = e.getValue(); }
         if (d.lastSync != null) S.lastSync = d.lastSync;
         for (int id : d.delPosts) S.posts.removeIf(p -> p.id == id);
     }
@@ -189,7 +215,9 @@ public class LanSync {
         List<Delta> ds = new ArrayList<>(pending); pending.clear();
         Map<Integer, String> old = new HashMap<>(); for (Sess s : S.sessions) old.put(s.id, s.status);
         long cutoff = lastMsgSeen;
+        boolean presOnly = ds.stream().allMatch(Delta::presenceOnly);
         for (Delta d : ds) apply(d);
+        if (presOnly) { campus.skillswap.service.Presence.refresh(); return; }       // heartbeats only: no reload, no persist
         snap = fingerprints(S); ver++;
         if (mode.equals("host")) persist();
         if (me == null) return;

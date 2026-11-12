@@ -120,7 +120,8 @@ public class ConnectionScreen {
         }
     }
     public static void applyRemote(Store st, Map<String, String> fp, int v) {
-        if (busy > 0 || videoOpen() || v != ver || fp.equals(snap)) return;   // wait while a video is playing
+        for (User ru : st.users.values()) { User cu = S.users.get(ru.username); if (cu != null && cu != me) cu.lastSeen = ru.lastSeen; }   // presence only: no full reload
+        if (busy > 0 || videoOpen() || v != ver || fp.equals(snap)) { campus.skillswap.service.Presence.refresh(); return; }   // wait while a video is playing
         Map<Integer, String> old = new HashMap<>(); for (Sess s : S.sessions) old.put(s.id, s.status); long cutoff = lastMsgSeen;
         S = st; snap = fp;
         if (me != null) {

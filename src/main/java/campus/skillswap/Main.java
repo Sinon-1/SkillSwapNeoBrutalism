@@ -58,13 +58,13 @@ public class Main {
         Thread.setDefaultUncaughtExceptionHandler((t, e) -> { e.printStackTrace(); if (frame != null && frame.isShowing()) SwingUtilities.invokeLater(() -> toast("Error: " + e.getMessage())); });
         SwingUtilities.invokeLater(() -> {
             frame = new JFrame("SkillSwap Campus - Peer Learning"); frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-            frame.addWindowListener(new WindowAdapter() { public void windowClosing(WindowEvent e) { closeDb(); } });
+            frame.addWindowListener(new WindowAdapter() { public void windowClosing(WindowEvent e) { try { campus.skillswap.service.Calls.shutdown(); campus.skillswap.service.Presence.goOffline(); save(); } catch (Exception ex) { } closeDb(); } });
             frame.setSize(1280, 780); frame.setMinimumSize(new Dimension(1050, 650)); frame.setLocationRelativeTo(null);
             if (!connectLoop("")) System.exit(0);
             try { initData(); } catch (Exception ex) { info("Could not load data from PostgreSQL:\n" + ex.getMessage()); System.exit(1); }
             root = new JPanel(rootCards); root.add(loginPanel(), "login"); root.add(appPanel(), "app");
             frame.setContentPane(root); frame.setVisible(true); rootCards.show(root, "login");
-            startPolling(); new Timer(30000, e -> checkReminders()).start();
+            startPolling(); campus.skillswap.service.Calls.startSignalPoller(); new Timer(30000, e -> checkReminders()).start(); new Timer(campus.skillswap.service.Presence.BEAT_MS, e -> campus.skillswap.service.Presence.tick()).start();
         });
     }
 }

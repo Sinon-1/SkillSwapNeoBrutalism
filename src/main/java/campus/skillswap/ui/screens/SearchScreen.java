@@ -81,7 +81,7 @@ public class SearchScreen {
     }
     public static JComponent tutorCard(User u, String skill) {
         JPanel c = card(); c.add(avatarWrap(name(u), 40), BorderLayout.WEST); JPanel inf = vbox(); JPanel h = row();
-        h.add(lbl(name(u), Font.BOLD, 13, TXT)); if (verified(u)) h.add(tag("VERIFIED", GREEN)); h.add(tag(skill, PINK)); if (u.nearby) h.add(tag("NEARBY NOW", GOLD)); put(inf, h);
+        h.add(lbl(name(u), Font.BOLD, 13, TXT)); if (verified(u)) h.add(tag("VERIFIED", GREEN)); h.add(tag(skill, PINK)); if (campus.skillswap.service.Presence.isNearby(u)) h.add(tag("NEARBY NOW", GOLD)); put(inf, h);
         put(inf, lbl(u.publicRatings ? (reviews(u).isEmpty() ? "No reviews yet" : stars(avg(u)) + " " + String.format("%.1f", avg(u)) + " (" + reviews(u).size() + ")") : "Ratings are private", Font.PLAIN, 11, GOLD));
         if (!u.bio.isEmpty()) put(inf, lbl(u.bio, Font.PLAIN, 11, MUTED)); c.add(inf);
         JPanel b = row(); b.add(btn("BOOK", () -> book(u.username, me.username, skill))); b.add(ghost("Message", () -> { chatWith = u.username; show("Messages"); })); b.add(ghost("View", () -> profileDialog(u))); c.add(b, BorderLayout.EAST); return c;

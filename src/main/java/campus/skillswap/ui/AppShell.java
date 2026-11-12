@@ -117,7 +117,7 @@ public class AppShell {
             String t = n[0]; b.addActionListener(e -> show(t)); put(sidebar, b); gap(sidebar, 6);
         }
         sidebar.add(Box.createVerticalGlue());
-        JButton out = ghost("Log Out", () -> { stopInline(); closeReels(); save(); me = null; rootCards.show(root, "login"); }); out.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42)); put(sidebar, out);
+        JButton out = ghost("Log Out", () -> { stopInline(); closeReels(); campus.skillswap.service.Calls.shutdown(); campus.skillswap.service.Presence.goOffline(); save(); me = null; rootCards.show(root, "login"); }); out.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42)); put(sidebar, out);
         sidebar.revalidate(); sidebar.repaint();
     }
     public static void buildRight() {

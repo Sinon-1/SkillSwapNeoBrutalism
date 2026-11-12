@@ -62,12 +62,6 @@ public class BookingsScreen {
         Sess s = new Sess(); s.id = nextId(); s.teacher = teacher; s.learner = learner; s.skill = skill; s.mode = String.valueOf(mode.getSelectedItem()); s.status = "PENDING"; s.requester = me.username;
         s.at = LocalDateTime.of(days.get(day.getSelectedIndex()), LocalTime.of(9 + time.getSelectedIndex(), 0)); S.sessions.add(s); save();
         String o = teacher.equals(me.username) ? learner : teacher; toast("Request sent to " + name(o));
-        if (S.users.get(o).demo) {   // demo accounts auto-accept after a moment; look the session up again by id in case data was refreshed meanwhile
-            final int sid = s.id;
-            Timer t = new Timer(2500, e -> { Sess cur = sess(sid);
-                if (cur != null && cur.status.equals("PENDING")) { if (confirm(cur)) notifyUser("Swap accepted", name(o) + " accepted your " + cur.skill + " session"); else { cur.status = "DECLINED"; save(); } if (me != null) show(page); } });
-            t.setRepeats(false); t.start();
-        }
         bookTab = "Upcoming"; show("Bookings");
     }
     public static boolean confirm(Sess s) {

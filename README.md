@@ -15,6 +15,18 @@ Students list what they can teach and want to learn, get matched, book sessions,
 There is no separate application server yet: each desktop app talks to PostgreSQL directly
 (see **Security notes** before deploying to real users).
 
+## Video & voice calls
+
+Open a chat in **Messages** and press **Video call** or **Voice call** (the other person must be online).
+They get a ringing window with Accept / Decline; during a call you can mute, turn the camera on/off and end the call.
+Call history ("Video call (2:31)", "Missed video call") is added to the chat.
+
+* **Setup** (ring / decline / hang up) goes through the shared PostgreSQL database (table `call_signals`) or the LAN host.
+* **Picture and sound** go straight from computer to computer over TCP, so both computers must be on the same network
+  (campus Wi-Fi/LAN) and the firewall must allow SkillSwap the first time it asks.
+* **Sound** uses plain Java Sound (no install). **Camera** uses ffmpeg: run `scripts/get-ffmpeg` once. Without ffmpeg or a camera the call still works as a voice call.
+* Use headphones on laptops, otherwise the speakers echo into the microphone.
+
 ## Project layout
 
 ```
