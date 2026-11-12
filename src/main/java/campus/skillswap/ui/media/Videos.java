@@ -100,7 +100,74 @@ public class Videos {
         }, "video-upload").start();
     }
     /** Download (once) to ~/.skillswap/cache, then hand the local file to the callback on the EDT. */
-    public static void withVideo(Post po, Consumer<File> ok, Consumer<String> fail) { if (LanSync.active()) withVideoLan(po, ok, fail); else withVideoPg(po, ok, fail); }
+    /** The file exactly as uploaded (used for thumbnails, which must not trigger a conversion). */
+    public static void withRawVideo(Post po, Consumer<File> ok, Consumer<String> fail) { if (LanSync.active()) withVideoLan(po, ok, fail); else withVideoPg(po, ok, fail); }
+    /** Like withRawVideo, but anything the in-app player can't decode (MKV, AVI, WebM, HEVC, MOV with odd codecs...) is converted to MP4 first, once, and cached. */
+    public static void withVideo(Post po, Consumer<File> ok, Consumer<String> fail) {
+        withRawVideo(po, file -> new Thread(() -> {
+            File use = file;
+            try { use = playable(po, file); }
+            catch (Throwable e) { final String m = nz(e.getMessage()).split("\n")[0]; SwingUtilities.invokeLater(() -> { setStatus(" "); toast("Could not convert this video for playback: " + m); }); }
+            final File res = use; SwingUtilities.invokeLater(() -> ok.accept(res));
+        }, "video-prepare").start(), fail);
+    }
+    static final Map<Integer, Object> CONV_LOCKS = new ConcurrentHashMap<>();
+    static boolean needsConversion(File f) {
+        String n = f.getName().toLowerCase(); String ext = n.substring(n.lastIndexOf('.') + 1); boolean box = ext.equals("mp4") || ext.equals("m4v") || ext.equals("mov");
+        if (ffmpeg() != null) {
+            String[] i = probe(f); boolean vOk = "h264".equals(i[0]) && i[1] != null && i[1].matches("yuvj?420p") && i[3] == null; boolean aOk = i[2] == null || "aac".equals(i[2]);
+            return !(box && vOk && aOk);
+        }
+        if (!box) return true; String d = diagnose(f); return !(d.contains("H.264") && (d.contains("AAC") || d.contains("none")));
+    }
+    /** Returns a file the player can play: the original if it already is MP4 H.264/AAC, otherwise a cached converted copy. Runs on a background thread. */
+    static File playable(Post po, File file) throws Exception {
+        Path dir = DIR.resolve("cache").resolve("play"), out = dir.resolve("v" + po.id + "_" + po.videoSize + ".mp4");
+        if (Files.exists(out) && Files.size(out) > 0) return out.toFile();
+        synchronized (CONV_LOCKS.computeIfAbsent(po.id, k -> new Object())) {
+            if (Files.exists(out) && Files.size(out) > 0) return out.toFile();
+            if (!needsConversion(file)) return file;
+            String ff = ensureFfmpeg(); Files.createDirectories(dir);
+            Path tmp = dir.resolve("v" + po.id + "_" + po.videoSize + ".part.mp4");
+            String[] info = probe(file);
+            boolean videoOk = "h264".equals(info[0]) && info[1] != null && info[1].matches("yuvj?420p") && info[3] == null;
+            List<String> audio = info[2] == null ? Arrays.asList("-an") : "aac".equals(info[2]) ? Arrays.asList("-c:a", "copy") : Arrays.asList("-c:a", "aac", "-b:a", "160k", "-ac", "2");
+            List<List<String>> plans = new ArrayList<>();
+            if (videoOk) plans.add(Arrays.asList("-c:v", "copy"));
+            plans.add(Arrays.asList("-vf", "scale=min(1920\\,iw):min(1920\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22"));
+            Exception lastErr = null;
+            for (List<String> plan : plans) {
+                List<String> cmd = new ArrayList<>(Arrays.asList(ff, "-y", "-i", file.getAbsolutePath(), "-map", "0:v:0", "-map", "0:a:0?")); cmd.addAll(plan); cmd.addAll(audio);
+                cmd.addAll(Arrays.asList("-movflags", "+faststart", "-progress", "pipe:1", "-nostats", tmp.toString()));
+                try { runFfmpeg(cmd, pct -> SwingUtilities.invokeLater(() -> setStatus("Preparing video for playback... " + pct + "%"))); }
+                catch (Exception e) { lastErr = e; continue; }
+                if (Files.exists(tmp) && Files.size(tmp) > 0) { Files.move(tmp, out, StandardCopyOption.REPLACE_EXISTING); SwingUtilities.invokeLater(() -> setStatus(" ")); return out.toFile(); }
+            }
+            Files.deleteIfExists(tmp);
+            throw lastErr != null ? lastErr : new IOException("ffmpeg could not convert this file.");
+        }
+    }
+    /** ffmpeg path; on Windows it is downloaded automatically (once, ~30 MB) into ~/.skillswap if missing. Other systems: install it with brew / apt. */
+    static synchronized String ensureFfmpeg() throws IOException {
+        String ff = ffmpeg(); if (ff != null) return ff;
+        if (!System.getProperty("os.name", "").toLowerCase().contains("win")) throw new IOException("ffmpeg is not installed. Install it (macOS: brew install ffmpeg, Linux: sudo apt install ffmpeg) and restart SkillSwap.");
+        SwingUtilities.invokeLater(() -> toast("Downloading the video converter (ffmpeg, about 30 MB) - one time only..."));
+        Files.createDirectories(DIR); Path zip = DIR.resolve("ffmpeg-download.zip");
+        try {
+            java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL("https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip").openConnection();
+            c.setInstanceFollowRedirects(true); c.setConnectTimeout(15000); c.setReadTimeout(30000); long len = c.getContentLengthLong(), got = 0; int last = -1;
+            try (InputStream in = c.getInputStream(); OutputStream o = Files.newOutputStream(zip)) {
+                byte[] b = new byte[65536]; int n; while ((n = in.read(b)) > 0) { o.write(b, 0, n); got += n; int pct = len > 0 ? (int) (got * 100 / len) : -1; if (pct != last) { last = pct; final int pp = pct; SwingUtilities.invokeLater(() -> setStatus("Downloading video converter... " + (pp >= 0 ? pp + "%" : ""))); } }
+            }
+            try (java.util.zip.ZipInputStream zi = new java.util.zip.ZipInputStream(Files.newInputStream(zip))) {
+                java.util.zip.ZipEntry e; while ((e = zi.getNextEntry()) != null) if (e.getName().toLowerCase().endsWith("/bin/ffmpeg.exe")) { Files.copy(zi, DIR.resolve("ffmpeg.exe"), StandardCopyOption.REPLACE_EXISTING); break; }
+            }
+        } catch (IOException e) { throw new IOException("Could not download ffmpeg (" + nz(e.getMessage()) + "). Check your internet connection, or run scripts\\get-ffmpeg.bat."); }
+        finally { Files.deleteIfExists(zip); SwingUtilities.invokeLater(() -> setStatus(" ")); }
+        ffmpegExe = null; ffmpegLastMiss = 0; ff = ffmpeg();
+        if (ff == null) throw new IOException("ffmpeg could not be installed. Run scripts\\get-ffmpeg.bat or: winget install Gyan.FFmpeg");
+        return ff;
+    }
     static final Map<Integer, Object> DL_LOCKS = new ConcurrentHashMap<>();
     /** True while a video player is on screen (inline or full-screen reels): incoming LAN/DB changes must not rebuild the UI then. */
     public static boolean videoOpen() { return inlineFx != null || Reels.reelDlg != null; }
@@ -255,6 +322,8 @@ public class Videos {
     public static JComponent fxPlayer(File f, int w, int h) {
         try { return (JComponent) Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("create", File.class, int.class, int.class).invoke(null, f, w, h); } catch (Throwable t) { return null; }
     }
+    /** Sends a command ("toggle", "back", "fwd", "mute") to the in-app player's controls. */
+    public static void fxCmd(JComponent c, String cmd) { try { Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("command", JComponent.class, String.class).invoke(null, c, cmd); } catch (Throwable t) { } }
     public static void fxStop(JComponent c) { try { Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("stop", JComponent.class).invoke(null, c); } catch (Throwable t) { } }
 
 
@@ -272,7 +341,7 @@ public class Videos {
         thumbPool.submit(() -> {
             try { if (Files.exists(png)) { BufferedImage im = javax.imageio.ImageIO.read(png.toFile()); if (im != null) { thumbs.put(id, im); thumbBusy.remove(id); SwingUtilities.invokeLater(done); return; } } } catch (Exception e) { /* regenerate */ }
             if (!videoCached(po) && po.videoSize > THUMB_AUTO_MAX) { thumbBusy.remove(id); return; }
-            SwingUtilities.invokeLater(() -> withVideo(po, file -> thumbPool.submit(() -> {
+            SwingUtilities.invokeLater(() -> withRawVideo(po, file -> thumbPool.submit(() -> {
                 BufferedImage im = grabFrame(file);
                 if (im == null) thumbFailed.add(id);
                 else { thumbs.put(id, im); try { Files.createDirectories(png.getParent()); javax.imageio.ImageIO.write(im, "png", png.toFile()); } catch (Exception e) { /* cache only */ } }
@@ -386,7 +455,7 @@ public class Videos {
             JComponent fx = fxPlayer(file, 480, 360, msg -> { if (tok == inlineTok) failInline(holder, file, msg, restore); });
             if (fx == null) { failInline(holder, file, "The in-app player (JavaFX) is not available. Start the app with scripts\\run-dev.bat.", restore); return; }
             inlineFx = fx; JPanel box = new JPanel(new BorderLayout(0, 4)); box.setOpaque(false); box.add(fx);
-            JPanel bar = row(); bar.add(ghost("\u2715 Close video", Videos::stopInline)); bar.add(lbl("Click the video to pause / resume", Font.PLAIN, 11, MUTED)); box.add(bar, BorderLayout.SOUTH);
+            JPanel bar = row(); bar.add(ghost("\u2715 Close video", Videos::stopInline)); bar.add(lbl("Click to pause  \u2022  double-click sides to skip 10s", Font.PLAIN, 11, MUTED)); box.add(bar, BorderLayout.SOUTH);
             holder.removeAll(); holder.add(box, BorderLayout.WEST); holder.revalidate(); holder.repaint();
         }, err -> { if (tok != inlineTok) return; inlineRestore = null; restore.run(); toast("Could not load video: " + err); });
     }

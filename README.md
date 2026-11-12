@@ -100,7 +100,12 @@ Demo accounts (password `demo`): ramos, alamag, henry, jeb, chinu, dino, jamesa,
 - Reels are stored inside PostgreSQL (BYTEA, max 60 MB each). Large volumes need object storage instead.
 - Never commit `.env` or `config.properties` (both are in `.gitignore`).
 
-## Videos: automatic conversion (recommended)
+## Videos: any format plays
+Videos in any format (MKV, AVI, WebM, HEVC, odd MOV...) now play: the first time one is opened, SkillSwap converts it to
+MP4 (H.264 + AAC) in the background and keeps the result in `~/.skillswap/cache/play`. On Windows ffmpeg is downloaded
+automatically the first time it is needed (about 30 MB, once). On macOS / Linux install it first (`brew install ffmpeg` / `sudo apt install ffmpeg`).
+
+## Videos: automatic conversion on upload (optional)
 The in-app player only plays MP4 with H.264 video + AAC audio. Install ffmpeg once and SkillSwap converts every
 uploaded video to that format for you (progress shows in the status bar; the original file is not changed):
 

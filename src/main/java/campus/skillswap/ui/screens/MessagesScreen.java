@@ -87,16 +87,23 @@ public class MessagesScreen {
     public static final Color[] RING = POP;
     public static Color ring(String un) { return RING[Math.floorMod(un.hashCode(), RING.length)]; }
 
-    /** Round profile picture with a coloured ring and a person silhouette. */
-    public static JComponent person(Color ring, int sz) {
+    /** Round profile picture: the user's photo when they have one, otherwise a coloured ring with a person silhouette. */
+    public static JComponent person(Color ring, int sz) { return person(ring, sz, () -> null); }
+    public static JComponent person(Color ring, int sz, java.util.function.Supplier<byte[]> photo) {
         return new JComponent() {
             { Dimension d = new Dimension(sz, sz); setPreferredSize(d); setMinimumSize(d); setMaximumSize(d); }
             protected void paintComponent(Graphics g0) {
-                Graphics2D g = (Graphics2D) g0.create(); aa(g); int d = sz - 4;
-                g.setColor(INK); g.fillOval(4, 4, d, d); g.setColor(ring); g.fillOval(0, 0, d, d);
-                g.setClip(new java.awt.geom.Ellipse2D.Float(0, 0, d, d)); g.setColor(ONACC);
-                int hr = Math.round(d * 0.17f); g.fillOval(d / 2 - hr, Math.round(d * 0.22f), hr * 2, hr * 2);
-                g.fillOval(Math.round(d * 0.2f), Math.round(d * 0.58f), Math.round(d * 0.6f), Math.round(d * 0.6f));
+                Graphics2D g = (Graphics2D) g0.create(); aa(g); int d = sz - 4; BufferedImage im = decodePhoto(photo.get());
+                g.setColor(INK); g.fillOval(4, 4, d, d);
+                if (im != null) {
+                    g.setClip(new java.awt.geom.Ellipse2D.Float(0, 0, d, d)); g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+                    int s2 = Math.min(im.getWidth(), im.getHeight()); g.drawImage(im, 0, 0, d, d, (im.getWidth() - s2) / 2, (im.getHeight() - s2) / 2, (im.getWidth() + s2) / 2, (im.getHeight() + s2) / 2, null);
+                } else {
+                    g.setColor(ring); g.fillOval(0, 0, d, d);
+                    g.setClip(new java.awt.geom.Ellipse2D.Float(0, 0, d, d)); g.setColor(ONACC);
+                    int hr = Math.round(d * 0.17f); g.fillOval(d / 2 - hr, Math.round(d * 0.22f), hr * 2, hr * 2);
+                    g.fillOval(Math.round(d * 0.2f), Math.round(d * 0.58f), Math.round(d * 0.6f), Math.round(d * 0.6f));
+                }
                 g.setClip(null); g.setColor(INK); g.setStroke(new BasicStroke(3f)); g.drawOval(1, 1, d - 3, d - 3); g.dispose();
             }
         };
@@ -193,7 +200,7 @@ public class MessagesScreen {
         Color rowBg = sel ? YEL : leftBg(); Color nameC = sel ? ONACC : TXT;
         JPanel r = new JPanel(new BorderLayout(10, 0)); r.setBackground(rowBg); r.setBorder(new CompoundBorder(new MatteBorder(0, 0, BW, 0, INK), new EmptyBorder(10, 0, 10, 14))); r.setCursor(new Cursor(Cursor.HAND_CURSOR));
         JPanel bar = new JPanel(); bar.setPreferredSize(new Dimension(6, 0)); bar.setBackground(sel ? INK : rowBg);
-        JPanel av = new JPanel(new GridBagLayout()); av.setOpaque(false); av.add(person(ring(u.username), 62));
+        JPanel av = new JPanel(new GridBagLayout()); av.setOpaque(false); av.add(person(ring(u.username), 62, () -> u.photo));
         JPanel west = new JPanel(new BorderLayout(10, 0)); west.setOpaque(false); west.add(bar, BorderLayout.WEST); west.add(av);
         JPanel mid = new JPanel(new GridBagLayout()); mid.setOpaque(false); GridBagConstraints g = new GridBagConstraints(); g.anchor = GridBagConstraints.WEST; g.weightx = 1;
         mid.add(lbl(name(u), Font.BOLD, 16, nameC), g);
@@ -229,7 +236,7 @@ public class MessagesScreen {
         } else {
             final User o = S.users.get(chatWith);
             JPanel h = new JPanel(new BorderLayout(14, 0)); h.setBackground(BG); h.setBorder(new CompoundBorder(new MatteBorder(0, 0, CB, 0, divider()), new EmptyBorder(14, 26, 14, 26)));
-            JPanel hav = new JPanel(new GridBagLayout()); hav.setOpaque(false); hav.add(person(ring(o.username), 58));
+            JPanel hav = new JPanel(new GridBagLayout()); hav.setOpaque(false); hav.add(person(ring(o.username), 58, () -> o.photo));
             JPanel hi = new JPanel(new GridBagLayout()); hi.setOpaque(false); JPanel hv = vbox();
             put(hv, lbl(name(o), Font.BOLD, 20, TXT)); put(hv, lbl("\u25CF " + (campus.skillswap.service.Presence.isOnline(o) ? "Online" : "Offline"), Font.PLAIN, 16, campus.skillswap.service.Presence.isOnline(o) ? GREEN : MUTED)); GridBagConstraints g = new GridBagConstraints(); g.anchor = GridBagConstraints.WEST; g.weightx = 1; hi.add(hv, g);
             JPanel hb = new JPanel(new GridBagLayout()); hb.setOpaque(false); JPanel hbr = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0)); hbr.setOpaque(false);

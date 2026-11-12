@@ -55,7 +55,7 @@ public class ProfileScreen {
     // ====================== PROFILE ======================
     public static JComponent profilePage() {
         Pg p = pg("My Profile & Rating", me.email, btn("Edit Profile", ProfileScreen::editProfile));
-        JPanel hd = card(); hd.add(avatarWrap(name(me), 64), BorderLayout.WEST); JPanel inf = vbox(); JPanel nm = row(); nm.add(lbl(name(me), Font.BOLD, 18, TXT)); if (verified(me)) nm.add(tag("VERIFIED TUTOR", GREEN));
+        JPanel hd = card(); hd.add(avatarWrap(name(me), 72), BorderLayout.WEST); JPanel inf = vbox(); JPanel nm = row(); nm.add(lbl(name(me), Font.BOLD, 18, TXT)); if (verified(me)) nm.add(tag("VERIFIED TUTOR", GREEN));
         nm.add(tag(me.publicRatings ? "RATINGS PUBLIC" : "RATINGS PRIVATE", MUTED)); put(inf, nm); put(inf, lbl(me.bio.isEmpty() ? "Add your year & course with Edit Profile" : me.bio, Font.PLAIN, 12, MUTED));
         put(inf, lbl(me.useRealName ? "Showing real name (username: " + me.username + ")" : "Showing username" + (me.realName.isEmpty() ? "" : " (real name hidden)"), Font.PLAIN, 11, MUTED)); hd.add(inf); put(p.body, hd); gap(p.body, 8);
         JPanel stats = new JPanel(new GridLayout(1, 3, 8, 0)); stats.setOpaque(false);
@@ -76,11 +76,66 @@ public class ProfileScreen {
             if (ask("Add skill", form(new String[]{"Skill"}, new JComponent[]{cb}))) { String s = String.valueOf(cb.getSelectedItem()).trim(); if (!s.isEmpty() && list.stream().noneMatch(x -> x.equalsIgnoreCase(s))) { list.add(s); save(); show("Profile"); } } }));
         c.add(r); return c;
     }
+    /** Crops the picture to a centred square, shrinks it to 256 px and stores it as a small JPEG (about 20 KB). */
+    static byte[] makePhoto(File f) throws IOException {
+        BufferedImage src = javax.imageio.ImageIO.read(f);
+        if (src == null) throw new IOException("That file is not a picture the app can read. Use JPG, PNG, GIF or BMP.");
+        int side = Math.min(src.getWidth(), src.getHeight()); BufferedImage cur = src.getSubimage((src.getWidth() - side) / 2, (src.getHeight() - side) / 2, side, side);
+        while (cur.getWidth() / 2 >= 256) cur = squareScale(cur, cur.getWidth() / 2);      // halve step by step so it stays sharp
+        cur = squareScale(cur, 256);
+        javax.imageio.ImageWriter w = javax.imageio.ImageIO.getImageWritersByFormatName("jpeg").next();
+        javax.imageio.ImageWriteParam pr = w.getDefaultWriteParam(); pr.setCompressionMode(javax.imageio.ImageWriteParam.MODE_EXPLICIT); pr.setCompressionQuality(0.86f);
+        ByteArrayOutputStream bo = new ByteArrayOutputStream();
+        try (javax.imageio.stream.ImageOutputStream io = javax.imageio.ImageIO.createImageOutputStream(bo)) { w.setOutput(io); w.write(null, new javax.imageio.IIOImage(cur, null, null), pr); } finally { w.dispose(); }
+        return bo.toByteArray();
+    }
+    static BufferedImage squareScale(BufferedImage in, int n) {
+        BufferedImage o = new BufferedImage(n, n, BufferedImage.TYPE_INT_RGB); Graphics2D g = o.createGraphics();
+        g.setColor(Color.WHITE); g.fillRect(0, 0, n, n); g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR); g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g.drawImage(in, 0, 0, n, n, null); g.dispose(); return o;
+    }
+    static JComponent sectionTitle(String t) {
+        JPanel p = vbox(); p.setOpaque(false); put(p, lbl(t, Font.BOLD, 11, MUTED)); gap(p, 4);
+        JPanel r = new JPanel(); r.setBackground(INK); r.setPreferredSize(new Dimension(1, 3)); r.setMaximumSize(new Dimension(Integer.MAX_VALUE, 3)); r.setMinimumSize(new Dimension(1, 3)); p.add(r); return p;
+    }
     public static void editProfile() {
-        JTextField rn = field(); rn.setText(me.realName); JTextArea bio = area(3, 22); bio.setText(me.bio);
+        final byte[][] photo = {me.photo};
+        JTextField rn = field(); rn.setText(me.realName); JTextArea bio = area(4, 26); bio.setText(me.bio);
         JCheckBox real = check("Show my real name publicly", me.useRealName), pub = check("Make my ratings public", me.publicRatings);
-        if (!ask("Edit profile", form(new String[]{"Real name", "Bio / major", "", ""}, new JComponent[]{rn, scroller(bio), real, pub}))) return;
-        me.realName = rn.getText().trim(); me.bio = bio.getText().trim(); me.useRealName = real.isSelected() && !me.realName.isEmpty(); me.publicRatings = pub.isSelected(); save(); show("Profile");
+        final JDialog dlg = new JDialog(frame, "Edit profile", true); final boolean[] saved = {false};
+        JComponent av = avatarOf(name(me), 96, () -> photo[0]);
+        JButton choose = btn("Choose photo...", null), remove = ghost("Remove", null); remove.setEnabled(photo[0] != null);
+        JLabel msg = lbl("JPG or PNG. It is cropped to a square.", Font.PLAIN, 11, MUTED);
+        choose.addActionListener(e -> {
+            JFileChooser fc = new JFileChooser(); fc.setDialogTitle("Choose a profile picture"); fc.setFileFilter(new FileNameExtensionFilter("Pictures (JPG, PNG, GIF, BMP)", "jpg", "jpeg", "png", "gif", "bmp"));
+            campus.skillswap.ui.media.PickerPreview.install(fc); fc.setAccessory(new campus.skillswap.ui.media.PickerPreview.ImagePreview(fc)); fc.setPreferredSize(new Dimension(860, 540));
+            if (fc.showOpenDialog(dlg) != JFileChooser.APPROVE_OPTION) return;
+            try { File f = fc.getSelectedFile(); if (f.length() > 25L * 1024 * 1024) throw new IOException("That picture is over 25 MB. Pick a smaller one.");
+                photo[0] = makePhoto(f); remove.setEnabled(true); msg.setText("Photo ready - press Save to keep it."); av.repaint();
+            } catch (Exception ex) { msg.setText(nz(ex.getMessage()).split("\n")[0]); }
+        });
+        remove.addActionListener(e -> { photo[0] = null; remove.setEnabled(false); msg.setText("Photo removed - press Save to keep the change."); av.repaint(); });
+
+        JPanel body = vbox(); body.setOpaque(true); body.setBackground(PANEL); body.setBorder(new EmptyBorder(20, 24, 8, 24));
+        put(body, sectionTitle("PROFILE PHOTO")); gap(body, 12);
+        JPanel top = new JPanel(new BorderLayout(18, 0)); top.setOpaque(false);
+        JPanel avBox = new JPanel(new GridBagLayout()); avBox.setOpaque(false); avBox.add(av); top.add(avBox, BorderLayout.WEST);
+        JPanel side = new JPanel(new GridBagLayout()); side.setOpaque(false); GridBagConstraints c = new GridBagConstraints(); c.gridx = 0; c.anchor = GridBagConstraints.WEST; c.gridy = 0; c.insets = new Insets(0, 0, 8, 0);
+        JPanel btns = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0)); btns.setOpaque(false); btns.add(choose); btns.add(remove); side.add(btns, c); c.gridy = 1; c.insets = new Insets(0, 0, 0, 0); side.add(msg, c);
+        top.add(side, BorderLayout.CENTER); put(body, top); gap(body, 20);
+        put(body, sectionTitle("ABOUT YOU")); gap(body, 8);
+        JPanel fm = form(new String[]{"Real name", "Bio / major"}, new JComponent[]{rn, scroller(bio)}); put(body, fm); gap(body, 14);
+        put(body, sectionTitle("PRIVACY")); gap(body, 6); JPanel pv = vbox(); pv.setOpaque(false); put(pv, real); gap(pv, 4); put(pv, pub); put(body, pv);
+
+        JButton save = btn("Save changes", () -> { saved[0] = true; dlg.dispose(); });
+        JPanel foot = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0)); foot.setOpaque(false); foot.setBorder(new EmptyBorder(14, 24, 18, 24)); foot.add(ghost("Cancel", dlg::dispose)); foot.add(save);
+        JPanel root = new JPanel(new BorderLayout()); root.setBackground(PANEL); root.add(body, BorderLayout.CENTER); root.add(foot, BorderLayout.SOUTH);
+        dlg.setContentPane(root); dlg.getRootPane().setDefaultButton(save);
+        dlg.getRootPane().registerKeyboardAction(e -> dlg.dispose(), KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
+        dlg.pack(); dlg.setSize(Math.max(520, dlg.getWidth()), dlg.getHeight()); dlg.setResizable(false); dlg.setLocationRelativeTo(frame);
+        busy++; try { dlg.setVisible(true); } finally { busy--; }
+        if (!saved[0]) return;
+        me.realName = rn.getText().trim(); me.bio = bio.getText().trim(); me.useRealName = real.isSelected() && !me.realName.isEmpty(); me.publicRatings = pub.isSelected(); me.photo = photo[0]; save(); show("Profile"); toast("Profile updated");
     }
     public static void profileDialog(User u) {
         if (u == null) return; StringBuilder sb = new StringBuilder(name(u) + (verified(u) ? "  [VERIFIED]" : "") + "\n" + (u.bio.isEmpty() ? "" : u.bio + "\n") + "\nTeaches: " + String.join(", ", u.teach) + "\nWants to learn: " + String.join(", ", u.learn) + "\nSessions taught: " + taught(u) + "\n");

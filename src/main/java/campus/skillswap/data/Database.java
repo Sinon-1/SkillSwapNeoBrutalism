@@ -67,6 +67,7 @@ public class Database {
             + " pass_hash TEXT NOT NULL, bio TEXT NOT NULL DEFAULT '', use_real_name BOOLEAN NOT NULL DEFAULT FALSE, public_ratings BOOLEAN NOT NULL DEFAULT TRUE,"
             + " nearby BOOLEAN NOT NULL DEFAULT FALSE, demo BOOLEAN NOT NULL DEFAULT FALSE, credits INT NOT NULL DEFAULT 5)",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS photo BYTEA",
         "CREATE TABLE IF NOT EXISTS user_skills(ord BIGSERIAL, username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,"
             + " kind CHAR(1) NOT NULL, skill TEXT NOT NULL, PRIMARY KEY(username, kind, skill))",
         "CREATE TABLE IF NOT EXISTS posts(id INT PRIMARY KEY, author TEXT NOT NULL, post_type TEXT NOT NULL, skill TEXT NOT NULL,"
@@ -117,9 +118,9 @@ public class Database {
         synchronized (RL) {
             Store st = new Store();
             try (Statement s = dbRead.createStatement()) {
-                try (ResultSet r = s.executeQuery("SELECT username,real_name,email,pass_hash,bio,use_real_name,public_ratings,nearby,demo,credits,last_seen FROM users ORDER BY ord")) {
+                try (ResultSet r = s.executeQuery("SELECT username,real_name,email,pass_hash,bio,use_real_name,public_ratings,nearby,demo,credits,last_seen,photo FROM users ORDER BY ord")) {
                     while (r.next()) { User u = new User(); u.username = r.getString(1); u.realName = nz(r.getString(2)); u.email = r.getString(3); u.passHash = r.getString(4); u.bio = nz(r.getString(5));
-                        u.useRealName = r.getBoolean(6); u.publicRatings = r.getBoolean(7); u.nearby = r.getBoolean(8); u.demo = r.getBoolean(9); u.credits = r.getInt(10); u.lastSeen = r.getLong(11); st.users.put(u.username, u); } }
+                        u.useRealName = r.getBoolean(6); u.publicRatings = r.getBoolean(7); u.nearby = r.getBoolean(8); u.demo = r.getBoolean(9); u.credits = r.getInt(10); u.lastSeen = r.getLong(11); u.photo = r.getBytes(12); st.users.put(u.username, u); } }
                 try (ResultSet r = s.executeQuery("SELECT username,kind,skill FROM user_skills ORDER BY ord")) {
                     while (r.next()) { User u = st.users.get(r.getString(1)); if (u != null) (r.getString(2).equals("T") ? u.teach : u.learn).add(r.getString(3)); } }
                 try (ResultSet r = s.executeQuery("SELECT id,author,post_type,skill,category,descr,created FROM posts ORDER BY id")) {
@@ -143,7 +144,7 @@ public class Database {
     /** One short fingerprint per row; save() only writes rows whose fingerprint changed, so two clients rarely overwrite each other. */
     public static Map<String, String> fingerprints(Store st) {
         Map<String, String> m = new HashMap<>();
-        for (User u : st.users.values()) m.put("u:" + u.username, j(nz(u.realName), u.email, u.passHash, nz(u.bio), u.useRealName, u.publicRatings, u.nearby, u.demo, u.credits, String.join("\u0002", u.teach), String.join("\u0002", u.learn)));
+        for (User u : st.users.values()) m.put("u:" + u.username, j(nz(u.realName), u.email, u.passHash, nz(u.bio), u.useRealName, u.publicRatings, u.nearby, u.demo, u.credits, u.photo == null ? 0 : Arrays.hashCode(u.photo), String.join("\u0002", u.teach), String.join("\u0002", u.learn)));
         for (Post p : st.posts) m.put("p:" + p.id, pfp(p));
         for (Sess s : st.sessions) m.put("s:" + s.id, j(s.teacher, s.learner, s.skill, s.mode, s.status, s.requester, nz(s.review), s.rating, s.at.truncatedTo(ChronoUnit.SECONDS)));
         for (Msg x : st.msgs) m.put("m:" + x.id, j(x.text, x.edited, x.deleted, nz(x.hiddenBy)));
@@ -174,11 +175,11 @@ public class Database {
         } catch (SQLException e) { toast("Database error: " + nz(e.getMessage()).split("\n")[0]); }
     }
     public static void writeUser(User u) throws SQLException {
-        try (PreparedStatement p = db.prepareStatement("INSERT INTO users(username,real_name,email,pass_hash,bio,use_real_name,public_ratings,nearby,demo,credits) VALUES(?,?,?,?,?,?,?,?,?,?) "
+        try (PreparedStatement p = db.prepareStatement("INSERT INTO users(username,real_name,email,pass_hash,bio,use_real_name,public_ratings,nearby,demo,credits,photo) VALUES(?,?,?,?,?,?,?,?,?,?,?) "
                 + "ON CONFLICT(username) DO UPDATE SET real_name=EXCLUDED.real_name,email=EXCLUDED.email,pass_hash=EXCLUDED.pass_hash,bio=EXCLUDED.bio,use_real_name=EXCLUDED.use_real_name,"
-                + "public_ratings=EXCLUDED.public_ratings,nearby=EXCLUDED.nearby,demo=EXCLUDED.demo,credits=EXCLUDED.credits")) {
+                + "public_ratings=EXCLUDED.public_ratings,nearby=EXCLUDED.nearby,demo=EXCLUDED.demo,credits=EXCLUDED.credits,photo=EXCLUDED.photo")) {
             p.setString(1, u.username); p.setString(2, nz(u.realName)); p.setString(3, u.email); p.setString(4, u.passHash); p.setString(5, nz(u.bio)); p.setBoolean(6, u.useRealName);
-            p.setBoolean(7, u.publicRatings); p.setBoolean(8, u.nearby); p.setBoolean(9, u.demo); p.setInt(10, u.credits); p.executeUpdate();
+            p.setBoolean(7, u.publicRatings); p.setBoolean(8, u.nearby); p.setBoolean(9, u.demo); p.setInt(10, u.credits); p.setBytes(11, u.photo); p.executeUpdate();
         }
         try (PreparedStatement d = db.prepareStatement("DELETE FROM user_skills WHERE username=?")) { d.setString(1, u.username); d.executeUpdate(); }
         try (PreparedStatement p = db.prepareStatement("INSERT INTO user_skills(username,kind,skill) VALUES(?,?,?) ON CONFLICT DO NOTHING")) {
