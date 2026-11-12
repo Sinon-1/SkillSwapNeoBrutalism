@@ -255,6 +255,8 @@ public class Videos {
     public static JComponent fxPlayer(File f, int w, int h) {
         try { return (JComponent) Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("create", File.class, int.class, int.class).invoke(null, f, w, h); } catch (Throwable t) { return null; }
     }
+    /** Sends a command ("toggle", "back", "fwd", "mute") to the in-app player's controls. */
+    public static void fxCmd(JComponent c, String cmd) { try { Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("command", JComponent.class, String.class).invoke(null, c, cmd); } catch (Throwable t) { } }
     public static void fxStop(JComponent c) { try { Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("stop", JComponent.class).invoke(null, c); } catch (Throwable t) { } }
 
 
@@ -386,7 +388,7 @@ public class Videos {
             JComponent fx = fxPlayer(file, 480, 360, msg -> { if (tok == inlineTok) failInline(holder, file, msg, restore); });
             if (fx == null) { failInline(holder, file, "The in-app player (JavaFX) is not available. Start the app with scripts\\run-dev.bat.", restore); return; }
             inlineFx = fx; JPanel box = new JPanel(new BorderLayout(0, 4)); box.setOpaque(false); box.add(fx);
-            JPanel bar = row(); bar.add(ghost("\u2715 Close video", Videos::stopInline)); bar.add(lbl("Click the video to pause / resume", Font.PLAIN, 11, MUTED)); box.add(bar, BorderLayout.SOUTH);
+            JPanel bar = row(); bar.add(ghost("\u2715 Close video", Videos::stopInline)); bar.add(lbl("Click: pause / play   Double-click sides: skip 10s   Hold: pause   Drag the bar to seek", Font.PLAIN, 11, MUTED)); box.add(bar, BorderLayout.SOUTH);
             holder.removeAll(); holder.add(box, BorderLayout.WEST); holder.revalidate(); holder.repaint();
         }, err -> { if (tok != inlineTok) return; inlineRestore = null; restore.run(); toast("Could not load video: " + err); });
     }
