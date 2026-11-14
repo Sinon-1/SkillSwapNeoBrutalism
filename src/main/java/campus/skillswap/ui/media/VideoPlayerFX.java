@@ -10,11 +10,6 @@ import javafx.geometry.Pos;
 import javafx.scene.Cursor;
 import javafx.scene.Group;
 import javafx.scene.Node;
-<<<<<<< HEAD
-=======
-import javafx.scene.control.Label;
-import javafx.scene.control.Tooltip;
->>>>>>> 3c39a34843c52ace42758aa202aebc0b17eb1f9b
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -129,13 +124,8 @@ public class VideoPlayerFX {
 
     static class Controls {
         final MediaPlayer mp; final double w, h; final StackPane root, fb; final Region hit = new Region();
-<<<<<<< HEAD
         final VBox bar = new VBox(2); final Rectangle mini = new Rectangle(0, 3);
         final Bar seek; final Text time = new Text("0:00 / 0:00"), badgeTxt = new Text(); final StackPane badge = pill(badgeTxt, 15);
-=======
-        final VBox bar = new VBox(4); final Rectangle mini = new Rectangle(0, 3);
-        final Bar seek, volBar; final Label time = new Label("0:00 / 0:00"), badge = new Label();
->>>>>>> 3c39a34843c52ace42758aa202aebc0b17eb1f9b
         final StackPane ppBtn, muteBtn; final Text speedTxt = new Text("1x");
         final PauseTransition clickDelay = new PauseTransition(Duration.millis(230)), holdTimer = new PauseTransition(Duration.millis(350)), hideTimer = new PauseTransition(Duration.millis(2600));
         final FadeTransition fade;
@@ -143,22 +133,14 @@ public class VideoPlayerFX {
         final double u;   // button size
 
         Controls(MediaPlayer mp, MediaView mv, double w, double h) {
-<<<<<<< HEAD
             this.mp = mp; this.w = w; this.h = h; u = h < 420 ? 28 : 32;
             hit.setStyle("-fx-background-color: transparent;"); hit.setCursor(Cursor.HAND);
             fb = new StackPane(); fb.setMouseTransparent(true);
-=======
-            this.mp = mp; this.w = w; this.h = h; u = h < 420 ? 28 : 36;
-            hit.setStyle("-fx-background-color: transparent;"); hit.setCursor(Cursor.HAND);
-            fb = new StackPane(); fb.setMouseTransparent(true);
-            badge.setStyle("-fx-background-color: rgba(0,0,0,0.6); -fx-background-radius: 20; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 13; -fx-padding: 6 14;");
->>>>>>> 3c39a34843c52ace42758aa202aebc0b17eb1f9b
             badge.setVisible(false); badge.setMouseTransparent(true); StackPane.setAlignment(badge, Pos.TOP_CENTER); StackPane.setMargin(badge, new Insets(14, 0, 0, 0));
             mini.setFill(PINK); mini.setMouseTransparent(true); StackPane.setAlignment(mini, Pos.BOTTOM_LEFT); mini.setVisible(false);
 
             seek = new Bar(w - 28, 16, r -> { double t = total(); if (t > 0) { mp.seek(Duration.seconds(r * t)); setTime(r * t, t); } }, d -> { dragging = d; if (!d) restartHide(); });
             ppBtn = btn(playShape(u * 0.42), u, null); ppBtn.setOnMouseClicked(e -> { toggle(false); e.consume(); });
-<<<<<<< HEAD
             time.setFill(Color.WHITE); time.setFont(Font.font("System", FontWeight.BOLD, 12));
             Region sp = new Region(); HBox.setHgrow(sp, Priority.ALWAYS);
             speedTxt.setFill(Color.WHITE); speedTxt.setFont(Font.font("System", FontWeight.BOLD, 12));
@@ -168,21 +150,6 @@ public class VideoPlayerFX {
             HBox row = new HBox(8, ppBtn, time, sp, speed, muteBtn); row.setAlignment(Pos.CENTER_LEFT);
             bar.getChildren().addAll(row, seek); bar.setPadding(new Insets(36, 14, 6, 14)); bar.setAlignment(Pos.BOTTOM_LEFT);
             bar.setStyle("-fx-background-color: linear-gradient(to top, rgba(0,0,0,0.70), rgba(0,0,0,0));");
-=======
-            StackPane back = textBtn("-10", u, () -> seekBy(-10)), fwd = textBtn("+10", u, () -> seekBy(10));
-            Tooltip.install(back, new Tooltip("Back 10 seconds")); Tooltip.install(fwd, new Tooltip("Forward 10 seconds")); Tooltip.install(ppBtn, new Tooltip("Play / pause"));
-            time.setStyle("-fx-text-fill: white; -fx-font-size: 12; -fx-font-weight: bold;");
-            Region sp = new Region(); HBox.setHgrow(sp, Priority.ALWAYS);
-            speedTxt.setFill(Color.WHITE); speedTxt.setFont(Font.font("System", FontWeight.BOLD, 13));
-            StackPane speed = btn(speedTxt, u, this::cycleSpeed); speed.setPrefWidth(u + 10); Tooltip.install(speed, new Tooltip("Playback speed"));
-            muteBtn = btn(speakerShape(muted || volume == 0), u, this::toggleMute); Tooltip.install(muteBtn, new Tooltip("Mute / unmute (M)"));
-            volBar = new Bar(64, 16, r -> { volume = r; mp.setVolume(r); if (r > 0 && muted) { muted = false; mp.setMute(false); } refreshMute(); }, d -> { });
-            volBar.setRatio(muted ? 0 : volume);
-            HBox row = new HBox(6, ppBtn, back, fwd, time, sp, speed, muteBtn); row.setAlignment(Pos.CENTER_LEFT);
-            if (w >= 420) row.getChildren().add(volBar);
-            bar.getChildren().addAll(seek, row); bar.setPadding(new Insets(28, 14, 8, 14)); bar.setAlignment(Pos.BOTTOM_LEFT);
-            bar.setStyle("-fx-background-color: linear-gradient(to top, rgba(0,0,0,0.82), rgba(0,0,0,0));");
->>>>>>> 3c39a34843c52ace42758aa202aebc0b17eb1f9b
             bar.setMaxHeight(Region.USE_PREF_SIZE); StackPane.setAlignment(bar, Pos.BOTTOM_CENTER);
             fade = new FadeTransition(Duration.millis(180), bar);
 
@@ -199,12 +166,8 @@ public class VideoPlayerFX {
         }
 
         // ---- time / progress ----
-<<<<<<< HEAD
         /** Length of ONE play-through. (getTotalDuration() is INDEFINITE for a looping player, which made the seek bar do nothing.) */
         double total() { Duration d = mp.getMedia() == null ? null : mp.getMedia().getDuration(); double t = d == null ? 0 : d.toSeconds(); return (t > 0 && !Double.isInfinite(t)) ? t : 0; }
-=======
-        double total() { double t = mp.getTotalDuration() == null ? 0 : mp.getTotalDuration().toSeconds(); return (t > 0 && !Double.isInfinite(t)) ? t : 0; }
->>>>>>> 3c39a34843c52ace42758aa202aebc0b17eb1f9b
         static String fmt(double s) { int t = (int) Math.max(0, s); return (t / 60) + ":" + (t % 60 < 10 ? "0" : "") + (t % 60); }
         void setTime(double cur, double tot) { time.setText(fmt(cur) + " / " + fmt(tot)); }
         void tick(Duration n) {
@@ -227,12 +190,7 @@ public class VideoPlayerFX {
             double t = total(); double cur = mp.getCurrentTime().toSeconds(); double to = cur + sec;
             to = Math.max(0, t > 0 ? Math.min(to, t - 0.1) : to); mp.seek(Duration.seconds(to));
             if (t > 0) { seek.setRatio(to / t); setTime(to, t); mini.setWidth(w * to / t); }
-<<<<<<< HEAD
             Text lt = new Text(sec < 0 ? "\u00AB " + (int) -sec + "s" : (int) sec + "s \u00BB"); StackPane l = pill(lt, 22);
-=======
-            Label l = new Label(sec < 0 ? "\u00AB " + (int) -sec + "s" : (int) sec + "s \u00BB");
-            l.setStyle("-fx-background-color: rgba(0,0,0,0.6); -fx-background-radius: 30; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 15; -fx-padding: 14 22;");
->>>>>>> 3c39a34843c52ace42758aa202aebc0b17eb1f9b
             StackPane.setAlignment(l, sec < 0 ? Pos.CENTER_LEFT : Pos.CENTER_RIGHT); StackPane.setMargin(l, new Insets(0, 40, 0, 40)); pop(l, false);
         }
         void cycleSpeed() {
@@ -240,11 +198,7 @@ public class VideoPlayerFX {
             double nr = SPEEDS[(i + 1) % SPEEDS.length]; mp.setRate(nr); speedTxt.setText((nr % 1 == 0 ? String.valueOf((int) nr) : String.valueOf(nr)) + "x");
         }
         void toggleMute() {
-<<<<<<< HEAD
             muted = !muted; if (!muted && volume == 0) volume = 0.6; mp.setMute(muted); mp.setVolume(volume); refreshMute();
-=======
-            muted = !muted; if (!muted && volume == 0) volume = 0.6; mp.setMute(muted); mp.setVolume(volume); volBar.setRatio(muted ? 0 : volume); refreshMute();
->>>>>>> 3c39a34843c52ace42758aa202aebc0b17eb1f9b
         }
         void refreshMute() { muteBtn.getChildren().set(1, speakerShape(muted || volume == 0)); }
 
@@ -253,11 +207,7 @@ public class VideoPlayerFX {
         void pressed(MouseEvent e) { suppressClick = false; zoneOf(e); holdTimer.playFromStart(); }
         void holdStart() {
             holdActive = true;
-<<<<<<< HEAD
             if (zone == 1) { savedRate = mp.getRate(); mp.setRate(2.0); badgeTxt.setText("2x  \u00BB\u00BB"); badge.setVisible(true); }
-=======
-            if (zone == 1) { savedRate = mp.getRate(); mp.setRate(2.0); badge.setText("2x  \u00BB\u00BB"); badge.setVisible(true); }
->>>>>>> 3c39a34843c52ace42758aa202aebc0b17eb1f9b
             else if (mp.getStatus() == MediaPlayer.Status.PLAYING) { pausedByHold = true; mp.pause(); }
         }
         void released(MouseEvent e) {
@@ -286,15 +236,12 @@ public class VideoPlayerFX {
             ParallelTransition pt = new ParallelTransition(ft, st); pt.setOnFinished(e -> fb.getChildren().remove(n)); pt.play();
         }
 
-<<<<<<< HEAD
         /** A rounded dark bubble with white bold text (built from plain shapes, no javafx-controls needed). */
         static StackPane pill(Text t, double pad) {
             t.setFill(Color.WHITE); t.setFont(Font.font("System", FontWeight.BOLD, 14));
             StackPane sp = new StackPane(t); sp.setStyle("-fx-background-color: rgba(0,0,0,0.6); -fx-background-radius: 30;"); sp.setPadding(new Insets(pad * 0.6, pad, pad * 0.6, pad));
             sp.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE); return sp;
         }
-=======
->>>>>>> 3c39a34843c52ace42758aa202aebc0b17eb1f9b
         // ---- icons ----
         static Node playShape(double s) { Polygon p = new Polygon(0, 0, 0, s, s * 0.86, s / 2); p.setFill(Color.WHITE); return p; }
         static Node pauseShape(double s) {

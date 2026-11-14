@@ -105,11 +105,7 @@ public class Reels {
     public static JPanel buildReel(Post po, int tok) {
         final int pid = po.id; final Color W = Color.WHITE;
         JPanel main = new JPanel(new BorderLayout(0, 10)); main.setBackground(Color.BLACK); main.setBorder(new EmptyBorder(12, 16, 14, 16));
-<<<<<<< HEAD
         JPanel tb = new JPanel(new BorderLayout()); tb.setOpaque(false); tb.add(lbl("Reels", Font.BOLD, 24, W), BorderLayout.WEST); JPanel hint = new JPanel(new GridBagLayout()); hint.setOpaque(false); hint.add(lbl("\u2191 \u2193 next reel   \u2022   Space pause   \u2022   \u2190 \u2192 skip   \u2022   Esc exit", Font.PLAIN, 12, REEL_MUTED)); tb.add(hint, BorderLayout.CENTER);
-=======
-        JPanel tb = new JPanel(new BorderLayout()); tb.setOpaque(false); tb.add(lbl("Reels", Font.BOLD, 24, W), BorderLayout.WEST); JPanel hint = new JPanel(new GridBagLayout()); hint.setOpaque(false); hint.add(lbl("\u2191 \u2193 / wheel: next reel   Space: pause   \u2190 \u2192: skip 5s   M: mute   Esc: exit", Font.PLAIN, 12, REEL_MUTED)); tb.add(hint, BorderLayout.CENTER);
->>>>>>> 3c39a34843c52ace42758aa202aebc0b17eb1f9b
         JPanel tr = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0)); tr.setOpaque(false); tr.add(lbl((reelIdx + 1) + " / " + reelIds.size(), Font.PLAIN, 12, REEL_MUTED));
         JButton x = reelBtn("\u2715", Reels::closeReels); fixSize(x, 44, 34); tr.add(x); tb.add(tr, BorderLayout.EAST); main.add(tb, BorderLayout.NORTH);
 

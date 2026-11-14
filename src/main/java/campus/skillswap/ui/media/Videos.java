@@ -455,11 +455,7 @@ public class Videos {
             JComponent fx = fxPlayer(file, 480, 360, msg -> { if (tok == inlineTok) failInline(holder, file, msg, restore); });
             if (fx == null) { failInline(holder, file, "The in-app player (JavaFX) is not available. Start the app with scripts\\run-dev.bat.", restore); return; }
             inlineFx = fx; JPanel box = new JPanel(new BorderLayout(0, 4)); box.setOpaque(false); box.add(fx);
-<<<<<<< HEAD
             JPanel bar = row(); bar.add(ghost("\u2715 Close video", Videos::stopInline)); bar.add(lbl("Click to pause  \u2022  double-click sides to skip 10s", Font.PLAIN, 11, MUTED)); box.add(bar, BorderLayout.SOUTH);
-=======
-            JPanel bar = row(); bar.add(ghost("\u2715 Close video", Videos::stopInline)); bar.add(lbl("Click: pause / play   Double-click sides: skip 10s   Hold: pause   Drag the bar to seek", Font.PLAIN, 11, MUTED)); box.add(bar, BorderLayout.SOUTH);
->>>>>>> 3c39a34843c52ace42758aa202aebc0b17eb1f9b
             holder.removeAll(); holder.add(box, BorderLayout.WEST); holder.revalidate(); holder.repaint();
         }, err -> { if (tok != inlineTok) return; inlineRestore = null; restore.run(); toast("Could not load video: " + err); });
     }
