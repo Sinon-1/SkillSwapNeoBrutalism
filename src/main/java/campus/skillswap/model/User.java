@@ -10,6 +10,8 @@ public class User implements java.io.Serializable {
     public boolean useRealName, publicRatings = true, nearby, demo;
     public List<String> teach = new ArrayList<>(), learn = new ArrayList<>();
     public int credits = 5;
+    /** Profile picture: a small square JPEG (about 256 px), or null to show the coloured initial. */
+    public byte[] photo;
     /** Epoch millis of the last heartbeat from this user's app (0 = signed out). Not part of the row fingerprint. */
     public long lastSeen;
 }

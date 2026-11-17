@@ -35,13 +35,13 @@ public class Calls {
     static ServerSocket ss; static CallLink link; static CallWindow win; static Camera cam; static Audio audio;
     static javax.swing.Timer ringTimer, tickTimer, beepTimer;
 
-    public static boolean inCall() { return state != 0; }
+    public static boolean inCall() { return state != 0 || GroupCalls.active(); }
 
     // ---------------------------------------------------------------- placing a call
     public static void start(String to, boolean withVideo) {
         if (me == null) return;
         if (!connected()) { toast("Connect to the database or a LAN host first"); return; }
-        if (state != 0) { toast("You are already in a call"); if (win != null) win.toFront(); return; }
+        if (state != 0 || GroupCalls.active()) { toast("You are already in a call"); if (win != null) win.toFront(); else GroupCalls.focus(); return; }
         User u = S.users.get(to); if (u == null) return;
         if (!Presence.isOnline(u)) { toast(name(u) + " is offline right now"); return; }
         final ServerSocket mine;
@@ -104,6 +104,8 @@ public class Calls {
             else if (state == 3) { if (link != null) link.bye(); sendSig("END", peer, callId, "", 0, video); endActive("Call ended"); }
         }
         public void mute(boolean on) { muted = on; }
+        public void emote(String key) { if (state == 3 && link != null) link.sendEmote(key); }
+        public void hand(boolean up) { if (state == 3 && link != null) link.sendHand(up); }
         public void camera(boolean on) { if (state != 3) return; if (on) startCamera(link); else { stopCamera(); if (link != null) link.sendCam(false); } camOn = on; win.setLocalCam(on); }
     };
 
@@ -116,6 +118,8 @@ public class Calls {
         l.onVideo = jpeg -> { BufferedImage im = decode(jpeg); CallWindow w = win; if (im != null && w != null) w.setRemote(im); };
         l.onAudio = b -> { Audio a = audio; if (a != null) a.play(b); };
         l.onCam = on -> { CallWindow w = win; if (w != null) w.setRemoteCam(on); };
+        l.onEmote = key -> SwingUtilities.invokeLater(() -> { CallWindow w = win; if (w != null && state == 3) w.showEmote(key, false); });
+        l.onHand = up -> SwingUtilities.invokeLater(() -> { CallWindow w = win; if (w != null && state == 3) w.setRemoteHand(up); });
         l.onClose = () -> SwingUtilities.invokeLater(() -> { if (link == l && state == 3) endActive("Call ended"); });
         audio = new Audio(); String warn = audio.start(chunk -> { if (!muted) l.sendAudio(chunk); }); if (warn != null) toast(warn);
         win.setLocalCam(camOn); win.setMode(Mode.ACTIVE, "Connected"); l.start();
@@ -158,6 +162,7 @@ public class Calls {
     static void closeServer() { if (ss != null) { try { ss.close(); } catch (IOException e) { } ss = null; } }
     /** Called on log out / window close. */
     public static void shutdown() {
+        GroupCalls.shutdown();
         if (state == 0) return;
         if (state == 1) sendSig("CANCEL", peer, callId, "", 0, video);
         else if (state == 2) sendSig("DECLINE", peer, callId, "", 0, video);
@@ -169,9 +174,10 @@ public class Calls {
     public static void onSignal(CallSig s) {
         if (me == null || s == null || !s.to.equals(me.username)) return;
         if (Math.abs(System.currentTimeMillis() - s.ts) > 90_000) return;           // old leftovers
+        if (s.kind != null && s.kind.startsWith("G")) { GroupCalls.onSignal(s); return; }   // group call setup (GJOIN / GRING / GHERE / GEND)
         boolean mine = s.callId != null && s.callId.equals(callId);
         switch (s.kind) {
-            case "INVITE": if (state != 0) sendSig("BUSY", s.from, s.callId, "", 0, s.video); else incoming(s); break;
+            case "INVITE": if (state != 0 || GroupCalls.active()) sendSig("BUSY", s.from, s.callId, "", 0, s.video); else incoming(s); break;
             case "CANCEL": if (state == 2 && mine) { endSession("Missed call", null); notifyUser("Missed call", name(s.from) + " tried to call you"); } break;
             case "DECLINE": if (state == 1 && mine) endSession(name(peer) + " declined the call", cap(kind()) + " declined"); break;
             case "BUSY": if (state == 1 && mine) endSession(name(peer) + " is on another call", "Missed " + kind()); break;

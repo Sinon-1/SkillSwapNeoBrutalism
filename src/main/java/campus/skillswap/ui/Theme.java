@@ -171,17 +171,37 @@ public class Theme {
         }
     }
     public static JPanel card() { return new Card(); }
-    public static JComponent avatar(String n, int sz) {
+    /** Profile picture of the person shown as this display name (or username), or null when they have none. */
+    public static byte[] photoFor(String n) {
+        try { if (S == null || n == null) return null; User u = S.users.get(n); if (u == null) for (User x : S.users.values()) if (name(x).equals(n)) { u = x; break; } return u == null ? null : u.photo; }
+        catch (Throwable t) { return null; }
+    }
+    static final Map<byte[], BufferedImage> PHOTOS = Collections.synchronizedMap(new WeakHashMap<>());
+    public static BufferedImage decodePhoto(byte[] b) {
+        if (b == null) return null; BufferedImage im = PHOTOS.get(b); if (im != null) return im;
+        try { im = javax.imageio.ImageIO.read(new ByteArrayInputStream(b)); if (im != null) PHOTOS.put(b, im); } catch (Exception e) { /* show the initial instead */ }
+        return im;
+    }
+    public static JComponent avatar(String n, int sz) { return avatarOf(n, sz, () -> photoFor(n)); }
+    /** Round avatar: the profile picture when there is one (read each time it paints, so previews update live), otherwise the coloured initial. */
+    public static JComponent avatarOf(String n, int sz, java.util.function.Supplier<byte[]> photo) {
         String[] w = n.trim().split("\\s+"); String s = w[w.length - 1].isEmpty() ? "?" : w[w.length - 1].substring(0, 1).toUpperCase();
         final Color fill = pop(n);
         return new JComponent() {
             { Dimension d = new Dimension(sz, sz); setPreferredSize(d); setMinimumSize(d); setMaximumSize(d); }
             protected void paintComponent(Graphics g0) {
-                Graphics2D g = (Graphics2D) g0; aa(g); int d = sz - 3;
-                g.setColor(INK); g.fillOval(3, 3, d, d); g.setColor(fill); g.fillOval(0, 0, d, d);
-                g.setColor(INK); g.setStroke(new BasicStroke(2.5f)); g.drawOval(1, 1, d - 2, d - 2);
-                g.setColor(ONACC); g.setFont(f(Font.BOLD, d / 2)); FontMetrics m = g.getFontMetrics();
-                g.drawString(s, (d - m.stringWidth(s)) / 2, (d + m.getAscent() - m.getDescent()) / 2);
+                Graphics2D g = (Graphics2D) g0; aa(g); int d = sz - 3; BufferedImage im = decodePhoto(photo.get());
+                g.setColor(INK); g.fillOval(3, 3, d, d);
+                if (im != null) {
+                    Shape old = g.getClip(); g.setClip(new java.awt.geom.Ellipse2D.Float(0, 0, d, d)); g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+                    int s2 = Math.min(im.getWidth(), im.getHeight()); g.drawImage(im, 0, 0, d, d, (im.getWidth() - s2) / 2, (im.getHeight() - s2) / 2, (im.getWidth() + s2) / 2, (im.getHeight() + s2) / 2, null); g.setClip(old);
+                    g.setColor(INK); g.setStroke(new BasicStroke(2.5f)); g.drawOval(1, 1, d - 2, d - 2);
+                } else {
+                    g.setColor(fill); g.fillOval(0, 0, d, d);
+                    g.setColor(INK); g.setStroke(new BasicStroke(2.5f)); g.drawOval(1, 1, d - 2, d - 2);
+                    g.setColor(ONACC); g.setFont(f(Font.BOLD, d / 2)); FontMetrics m = g.getFontMetrics();
+                    g.drawString(s, (d - m.stringWidth(s)) / 2, (d + m.getAscent() - m.getDescent()) / 2);
+                }
             }
         };
     }

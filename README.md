@@ -27,12 +27,35 @@ Call history ("Video call (2:31)", "Missed video call") is added to the chat.
 * **Sound** uses plain Java Sound (no install). **Camera** uses ffmpeg: run `scripts/get-ffmpeg` once. Without ffmpeg or a camera the call still works as a voice call.
 * Use headphones on laptops, otherwise the speakers echo into the microphone.
 
+## Group chat, group calls, emotes and raise hand
+
+* **Group chat** - in **Messages** press **+ Group**, name it and tick at least 2 people. Groups appear in the chat list next to normal chats
+  (tag "GROUP"). Messages can be edited / unsent like normal ones, other people's names show above their bubbles, and notices
+  ("Ana created the group", "Group video call ended (12:30)") appear as green tags. **Members** lets anyone add people or leave;
+  the creator can also rename the group and remove people. Group messages are normal rows in `messages` with `to_user = 'g:<id>'`;
+  the groups themselves are in `chat_groups` / `chat_group_members` (created automatically).
+* **Group video call** - press **Group call** in a group chat (up to 6 people, online members only). If nobody is in the call yet, the other
+  online members get a ringing window with **Join call**; if a call is already running you simply join it (the button turns into **Back to call**).
+  Everybody connects directly to everybody (no server), exactly like 1-to-1 calls, so use headphones and stay on the same network.
+  A green border shows who is speaking; a red mic icon shows who is muted.
+* **Emotes** - press **EMOTES** during any call (1-to-1 or group) and pick Good, Love it, Haha, Wow, Got it!, Confused, Great job or Yay!.
+  The sticker floats up from your picture on everybody's screen. (Drawn in code, so no emoji font is needed.)
+* **Raise hand** - press **RAISE HAND**: a yellow hand appears on your picture and in the top bar, numbered in the order hands went up, so a tutor
+  can call on students in turn. Press **LOWER HAND** to put it down.
+
+### Booking modes
+
+When booking a session you choose **In person**, **Offline** or **Online**.
+* **In person** - meet on campus; *Details* shows the time and reminds you to settle the spot by chat.
+* **Offline** - no live meeting; *Message* opens the chat with the other person.
+* **Online** - tick **Request a video call** to hold the session as an in-app video call. The tutor sees the request (tag "VIDEO CALL") and, once confirmed, either of you can press **Video call** on the booking (or in the chat) to ring the other person.
+
 ## Project layout
 
 ```
 skillswap/
 ├── pom.xml                         Maven build (PostgreSQL driver, optional JavaFX video, runnable jar)
-├── database/schema.sql             Tables (the app also creates them automatically on first connect)
+├── database/schema.sql             Tables (incl. chat_groups, chat_group_members) (the app also creates them automatically on first connect)
 ├── lib/postgresql-42.7.4.jar       JDBC driver for building without Maven
 ├── scripts/                        run-dev, package (installer), build-no-maven  (.sh and .bat)
 ├── .env.example  .gitignore
@@ -40,7 +63,7 @@ skillswap/
     ├── Main.java                   Entry point
     ├── config/AppConfig.java       ~/.skillswap/config.properties (DB connection, theme)
     ├── core/AppState.java          Loaded data snapshot + signed-in user
-    ├── model/                      User, Post, Sess, Msg, Report, Store, Match
+    ├── model/                      User, Post, Sess, Msg, Report, Store, Match, Group, CallSig
     ├── data/                       Database (SQL, polling, saving) + Seed (demo data)
     ├── net/LanSync.java            Host/Join over Wi-Fi/LAN (no database needed)
     ├── service/                    Stats (ratings, badges, matching), Skills (categories), Security (hashing)
@@ -100,7 +123,12 @@ Demo accounts (password `demo`): ramos, alamag, henry, jeb, chinu, dino, jamesa,
 - Reels are stored inside PostgreSQL (BYTEA, max 60 MB each). Large volumes need object storage instead.
 - Never commit `.env` or `config.properties` (both are in `.gitignore`).
 
-## Videos: automatic conversion (recommended)
+## Videos: any format plays
+Videos in any format (MKV, AVI, WebM, HEVC, odd MOV...) now play: the first time one is opened, SkillSwap converts it to
+MP4 (H.264 + AAC) in the background and keeps the result in `~/.skillswap/cache/play`. On Windows ffmpeg is downloaded
+automatically the first time it is needed (about 30 MB, once). On macOS / Linux install it first (`brew install ffmpeg` / `sudo apt install ffmpeg`).
+
+## Videos: automatic conversion on upload (optional)
 The in-app player only plays MP4 with H.264 video + AAC audio. Install ffmpeg once and SkillSwap converts every
 uploaded video to that format for you (progress shows in the status bar; the original file is not changed):
 

@@ -74,6 +74,10 @@ public class Reels {
             rp.registerKeyboardAction(e -> reelStep(1), KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
             rp.registerKeyboardAction(e -> reelStep(-1), KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
             rp.registerKeyboardAction(e -> closeReels(), KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
+            rp.registerKeyboardAction(e -> { if (reelFx != null) fxCmd(reelFx, "toggle"); }, KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
+            rp.registerKeyboardAction(e -> { if (reelFx != null) fxCmd(reelFx, "back"); }, KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
+            rp.registerKeyboardAction(e -> { if (reelFx != null) fxCmd(reelFx, "fwd"); }, KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
+            rp.registerKeyboardAction(e -> { if (reelFx != null) fxCmd(reelFx, "mute"); }, KeyStroke.getKeyStroke(KeyEvent.VK_M, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
             reelDlg.addMouseWheelListener(e -> { long n = System.currentTimeMillis(); if (n - lastWheel > 450) { lastWheel = n; reelStep(e.getWheelRotation() > 0 ? 1 : -1); } });
         }
         renderReel(); reelDlg.setVisible(true); reelDlg.toFront(); reelDlg.requestFocus();
@@ -101,7 +105,7 @@ public class Reels {
     public static JPanel buildReel(Post po, int tok) {
         final int pid = po.id; final Color W = Color.WHITE;
         JPanel main = new JPanel(new BorderLayout(0, 10)); main.setBackground(Color.BLACK); main.setBorder(new EmptyBorder(12, 16, 14, 16));
-        JPanel tb = new JPanel(new BorderLayout()); tb.setOpaque(false); tb.add(lbl("Reels", Font.BOLD, 24, W), BorderLayout.WEST); JPanel hint = new JPanel(new GridBagLayout()); hint.setOpaque(false); hint.add(lbl("\u2191 \u2193 or mouse wheel: next reel     Esc: exit full screen", Font.PLAIN, 12, REEL_MUTED)); tb.add(hint, BorderLayout.CENTER);
+        JPanel tb = new JPanel(new BorderLayout()); tb.setOpaque(false); tb.add(lbl("Reels", Font.BOLD, 24, W), BorderLayout.WEST); JPanel hint = new JPanel(new GridBagLayout()); hint.setOpaque(false); hint.add(lbl("\u2191 \u2193 next reel   \u2022   Space pause   \u2022   \u2190 \u2192 skip   \u2022   Esc exit", Font.PLAIN, 12, REEL_MUTED)); tb.add(hint, BorderLayout.CENTER);
         JPanel tr = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0)); tr.setOpaque(false); tr.add(lbl((reelIdx + 1) + " / " + reelIds.size(), Font.PLAIN, 12, REEL_MUTED));
         JButton x = reelBtn("\u2715", Reels::closeReels); fixSize(x, 44, 34); tr.add(x); tb.add(tr, BorderLayout.EAST); main.add(tb, BorderLayout.NORTH);
 

@@ -8,12 +8,13 @@ import static campus.skillswap.ui.Theme.*;
 
 /** The call screen: remote video (or avatar), your own picture in the corner, and the call buttons. Not modal. */
 public class CallWindow extends JFrame {
-    public interface Actions { void accept(); void decline(); void hangup(); void mute(boolean on); void camera(boolean on); }
+    public interface Actions { void accept(); void decline(); void hangup(); void mute(boolean on); void camera(boolean on); void emote(String key); void hand(boolean up); }
     public enum Mode { OUTGOING, INCOMING, ACTIVE, ENDED }
     static final Color STAGE = new Color(0x14141A), BAR = new Color(0x1E1E26), RED = new Color(0xE5484D), OK = new Color(0x2FB344);
 
     final Actions act; final String peerKey, peerName;
-    volatile BufferedImage remote, local; volatile boolean remoteCam = true, localCam, muted;
+    volatile BufferedImage remote, local; volatile boolean remoteCam = true, localCam, muted, localHand, remoteHand;
+    final CallFx.Layer fx = new CallFx.Layer(); final javax.swing.Timer fxTimer;
     volatile String status = "", notice = ""; Mode mode = Mode.OUTGOING; final JPanel stage, bar = new JPanel(new FlowLayout(FlowLayout.CENTER, 14, 12));
 
     public CallWindow(String peerKey, String peerName, boolean cameraOn, Actions act) {
@@ -25,7 +26,14 @@ public class CallWindow extends JFrame {
         stage.setPreferredSize(new Dimension(860, 560)); stage.setBackground(STAGE);
         bar.setBackground(BAR); bar.setBorder(new javax.swing.border.MatteBorder(3, 0, 0, 0, INK));
         setLayout(new BorderLayout()); add(stage); add(bar, BorderLayout.SOUTH); pack(); setMinimumSize(new Dimension(520, 420));
+        fxTimer = new javax.swing.Timer(33, e -> { if (fx.active()) stage.repaint(); }); fxTimer.start();     // animates floating emotes
     }
+    @Override public void dispose() { fxTimer.stop(); super.dispose(); }
+
+    /** An emote from the other person floats up over the call picture. */
+    public void showEmote(String key, boolean mine) { if (CallFx.valid(key) && fx.add(key, mine ? "me" : "peer")) stage.repaint(); }
+    public void setRemoteHand(boolean up) { remoteHand = up; stage.repaint(); }
+    void pickEmote(String key) { if (fx.add(key, "me")) { act.emote(key); stage.repaint(); } }
 
     public void open() { setLocationRelativeTo(frame_()); setVisible(true); toFront(); }
     static Component frame_() { return AppShell.frame != null && AppShell.frame.isShowing() ? AppShell.frame : null; }
@@ -59,6 +67,9 @@ public class CallWindow extends JFrame {
                 JButton[] mb = new JButton[1], cb = new JButton[1];
                 bar.add(cbtn(muted ? "UNMUTE" : "MUTE", muted ? YEL : FIELD, muted ? ONACC : TXT, () -> { muted = !muted; act.mute(muted); buildBar(); }));
                 bar.add(cbtn(localCam ? "CAMERA OFF" : "CAMERA ON", localCam ? FIELD : YEL, localCam ? TXT : ONACC, () -> act.camera(!localCam)));
+                JButton em = cbtn("EMOTES", FIELD, TXT, null); em.setIcon(CallFx.icon("LAUGH", 22)); em.setIconTextGap(8); em.addActionListener(e -> CallFx.showPalette(em, this::pickEmote)); bar.add(em);
+                JButton hd = cbtn(localHand ? "LOWER HAND" : "RAISE HAND", localHand ? YEL : FIELD, localHand ? ONACC : TXT, () -> { localHand = !localHand; act.hand(localHand); buildBar(); stage.repaint(); });
+                hd.setIcon(CallFx.handIcon(22)); hd.setIconTextGap(8); bar.add(hd);
                 bar.add(cbtn("END CALL", RED, Color.WHITE, act::hangup)); break;
             }
             default: bar.add(cbtn("CLOSE", FIELD, TXT, this::dispose));
@@ -100,6 +111,11 @@ public class CallWindow extends JFrame {
                 Shape old = g.getClip(); g.setClip(px, py, pw, ph); g.drawImage(l, px + (pw + iw) / 2, py + (ph - ih) / 2, -iw, ih, null); g.setClip(old); }   // mirrored, like a mirror
             else { g.setColor(new Color(0xB8B8C4)); g.setFont(f(Font.BOLD, 12)); String t = localCam ? "Starting camera..." : "Camera off"; g.drawString(t, px + (pw - g.getFontMetrics().stringWidth(t)) / 2, py + ph / 2 + 4); }
             g.setColor(Color.WHITE); g.setStroke(new BasicStroke(3f)); g.drawRect(px, py, pw, ph);
+            // raised hands + floating emotes
+            if (remoteHand) { String t = peerName + " raised a hand"; CallFx.paintHandBadge(g, w - 20 - CallFx.badgeWidth(g, 0, t), 14, 0, t); }
+            if (localHand) CallFx.paintHandBadge(g, px + 8, py + 8, 0, "");
+            final Rectangle meR = new Rectangle(px, py, pw, ph), peerR = new Rectangle(w / 8, 0, w * 3 / 4, h - 10);
+            fx.paint(g, who -> who.equals("me") ? meR : peerR, 84);
         }
     }
 }

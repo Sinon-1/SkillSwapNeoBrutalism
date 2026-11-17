@@ -126,10 +126,9 @@ public class ConnectionScreen {
         S = st; snap = fp;
         if (me != null) {
             me = S.users.get(me.username); if (me == null) { rootCards.show(root, "login"); return; }
-            for (Msg m : S.msgs) if (m.to.equals(me.username) && m.time > cutoff) { lastMsgSeen = Math.max(lastMsgSeen, m.time);
-                if (!(page.equals("Messages") && m.from.equals(chatWith))) notifyUser("New message", name(m.from) + ": " + m.text); }
+            for (Msg m : S.msgs) MessagesScreen.notifyNew(m, cutoff);
             for (Sess s : S.sessions) if (involves(s, me)) { String o = old.get(s.id); boolean req = s.requester.equals(me.username);
-                if (o == null && s.status.equals("PENDING") && !req) notifyUser("New swap request", name(s.requester) + " wants a " + s.skill + " session");
+                if (o == null && s.status.equals("PENDING") && !req) notifyUser("New swap request", name(s.requester) + " wants a " + s.skill + " session" + (s.videoCall ? " (video call requested)" : ""));
                 else if ("PENDING".equals(o) && req && s.status.equals("CONFIRMED")) notifyUser("Swap accepted", name(other(s)) + " accepted your " + s.skill + " session");
                 else if ("PENDING".equals(o) && req && s.status.equals("DECLINED")) notifyUser("Swap declined", name(other(s)) + " declined your " + s.skill + " request"); }
             show(page);

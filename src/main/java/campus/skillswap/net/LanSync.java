@@ -43,9 +43,9 @@ public class LanSync {
     public static class Delta implements Serializable {
         private static final long serialVersionUID = 1L;
         List<User> users = new ArrayList<>(); List<Post> posts = new ArrayList<>(); List<Sess> sessions = new ArrayList<>();
-        List<Msg> msgs = new ArrayList<>(); List<Report> reports = new ArrayList<>(); List<Integer> delPosts = new ArrayList<>(); String lastSync; Map<String, Long> seen = new HashMap<>(); List<CallSig> sig = new ArrayList<>();
-        boolean empty() { return users.isEmpty() && posts.isEmpty() && sessions.isEmpty() && msgs.isEmpty() && reports.isEmpty() && delPosts.isEmpty() && lastSync == null && seen.isEmpty(); }
-        boolean presenceOnly() { return users.isEmpty() && posts.isEmpty() && sessions.isEmpty() && msgs.isEmpty() && reports.isEmpty() && delPosts.isEmpty() && lastSync == null && !seen.isEmpty(); }
+        List<Msg> msgs = new ArrayList<>(); List<Report> reports = new ArrayList<>(); List<Group> groups = new ArrayList<>(); List<Integer> delPosts = new ArrayList<>(); String lastSync; Map<String, Long> seen = new HashMap<>(); List<CallSig> sig = new ArrayList<>();
+        boolean empty() { return users.isEmpty() && posts.isEmpty() && sessions.isEmpty() && msgs.isEmpty() && reports.isEmpty() && groups.isEmpty() && delPosts.isEmpty() && lastSync == null && seen.isEmpty(); }
+        boolean presenceOnly() { return users.isEmpty() && posts.isEmpty() && sessions.isEmpty() && msgs.isEmpty() && reports.isEmpty() && groups.isEmpty() && delPosts.isEmpty() && lastSync == null && !seen.isEmpty(); }
     }
 
     public static boolean active() { return !mode.equals("off"); }
@@ -152,7 +152,7 @@ public class LanSync {
         int id; do { id = ThreadLocalRandom.current().nextInt(1, Integer.MAX_VALUE); } while (idUsed(id)); return id;
     }
     static boolean idUsed(int id) {
-        return S.posts.stream().anyMatch(x -> x.id == id) || S.sessions.stream().anyMatch(x -> x.id == id) || S.msgs.stream().anyMatch(x -> x.id == id) || S.reports.stream().anyMatch(x -> x.id == id);
+        return S.posts.stream().anyMatch(x -> x.id == id) || S.sessions.stream().anyMatch(x -> x.id == id) || S.msgs.stream().anyMatch(x -> x.id == id) || S.reports.stream().anyMatch(x -> x.id == id) || S.groups.stream().anyMatch(x -> x.id == id);
     }
     /** Find the rows that changed since the last save and send just those. */
     public static void save() {
@@ -162,6 +162,7 @@ public class LanSync {
         for (Sess s : S.sessions) if (chg("s:" + s.id, now)) d.sessions.add(s);
         for (Msg m : S.msgs) if (chg("m:" + m.id, now)) d.msgs.add(m);
         for (Report r : S.reports) if (chg("r:" + r.id, now)) d.reports.add(r);
+        for (Group g : S.groups) if (chg("g:" + g.id, now)) d.groups.add(g);
         if (chg("meta:sync", now)) d.lastSync = S.lastSync;
         for (String k : snap.keySet()) if (k.startsWith("p:") && !now.containsKey(k)) d.delPosts.add(Integer.parseInt(k.substring(2)));
         snap = now; if (d.empty()) return;
@@ -204,6 +205,7 @@ public class LanSync {
         for (Sess s : d.sessions) upsert(S.sessions, s, x -> x.id);
         for (Msg m : d.msgs) upsert(S.msgs, m, x -> x.id);
         for (Report r : d.reports) upsert(S.reports, r, x -> x.id);
+        for (Group g : d.groups) upsert(S.groups, g, x -> x.id);
         for (Map.Entry<String, Long> e : d.seen.entrySet()) { User u = S.users.get(e.getKey()); if (u != null && (me == null || u != me)) u.lastSeen = e.getValue(); }
         if (d.lastSync != null) S.lastSync = d.lastSync;
         for (int id : d.delPosts) S.posts.removeIf(p -> p.id == id);
@@ -224,10 +226,9 @@ public class LanSync {
         me = S.users.get(me.username); if (me == null) { rootCards.show(root, "login"); return; }
         if (force) return;
         for (Delta d : ds) {
-            for (Msg m : d.msgs) if (m.to.equals(me.username) && m.time > cutoff) { lastMsgSeen = Math.max(lastMsgSeen, m.time);
-                if (!(page.equals("Messages") && m.from.equals(chatWith))) notifyUser("New message", name(m.from) + ": " + m.text); }
+            for (Msg m : d.msgs) campus.skillswap.ui.screens.MessagesScreen.notifyNew(m, cutoff);
             for (Sess s : d.sessions) if (involves(s, me)) { String o = old.get(s.id); boolean req = s.requester.equals(me.username);
-                if (o == null && s.status.equals("PENDING") && !req) notifyUser("New swap request", name(s.requester) + " wants a " + s.skill + " session");
+                if (o == null && s.status.equals("PENDING") && !req) notifyUser("New swap request", name(s.requester) + " wants a " + s.skill + " session" + (s.videoCall ? " (video call requested)" : ""));
                 else if ("PENDING".equals(o) && req && s.status.equals("CONFIRMED")) notifyUser("Swap accepted", name(other(s)) + " accepted your " + s.skill + " session");
                 else if ("PENDING".equals(o) && req && s.status.equals("DECLINED")) notifyUser("Swap declined", name(other(s)) + " declined your " + s.skill + " request"); }
         }

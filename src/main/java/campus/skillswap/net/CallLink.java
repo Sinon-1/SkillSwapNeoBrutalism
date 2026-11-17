@@ -7,13 +7,15 @@ import java.util.function.Consumer;
 
 /**
  * One direct TCP connection between the two people in a call.
- * Frames: [type:1][length:4][payload]. Video frames are JPEGs, audio frames are 16 kHz mono 16-bit PCM.
+ * Frames: [type:1][length:4][payload]. Video frames are JPEGs, audio frames are 16 kHz mono 16-bit PCM,
+ * EMOTE carries the emote key, HAND / MIC / CAM carry one on/off byte.
  * Only the newest video frame is ever queued, so a slow network lowers the frame rate instead of delaying the sound.
  */
 public class CallLink {
-    public static final int VIDEO = 1, AUDIO = 2, CAM = 3, BYE = 4;
+    public static final int VIDEO = 1, AUDIO = 2, CAM = 3, BYE = 4, EMOTE = 5, HAND = 6, MIC = 7;
     public volatile Consumer<byte[]> onVideo, onAudio;
-    public volatile Consumer<Boolean> onCam;
+    public volatile Consumer<Boolean> onCam, onHand, onMic;
+    public volatile Consumer<String> onEmote;
     public volatile Runnable onClose;
     public volatile boolean byeReceived;
     final Socket s; final DataInputStream in; final DataOutputStream out;
@@ -39,6 +41,9 @@ public class CallLink {
                     case VIDEO: { Consumer<byte[]> c = onVideo; if (c != null) c.accept(b); break; }
                     case AUDIO: { Consumer<byte[]> c = onAudio; if (c != null) c.accept(b); break; }
                     case CAM: { Consumer<Boolean> c = onCam; if (c != null && n > 0) c.accept(b[0] == 1); break; }
+                    case EMOTE: { Consumer<String> c = onEmote; if (c != null && n > 0 && n <= 32) c.accept(new String(b, java.nio.charset.StandardCharsets.UTF_8)); break; }
+                    case HAND: { Consumer<Boolean> c = onHand; if (c != null && n > 0) c.accept(b[0] == 1); break; }
+                    case MIC: { Consumer<Boolean> c = onMic; if (c != null && n > 0) c.accept(b[0] == 1); break; }
                     case BYE: byeReceived = true; close(); return;
                     default: break;
                 }
@@ -62,6 +67,9 @@ public class CallLink {
     public void sendAudio(byte[] b) { write(AUDIO, b); }
     public void sendVideo(byte[] jpeg) { pendingVideo.set(jpeg); synchronized (vl) { vl.notify(); } }
     public void sendCam(boolean on) { write(CAM, new byte[]{(byte) (on ? 1 : 0)}); }
+    public void sendEmote(String key) { write(EMOTE, key.getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+    public void sendHand(boolean up) { write(HAND, new byte[]{(byte) (up ? 1 : 0)}); }
+    public void sendMic(boolean on) { write(MIC, new byte[]{(byte) (on ? 1 : 0)}); }
     public void bye() { write(BYE, new byte[0]); }
     public boolean isClosed() { return closed.get(); }
     public void close() {

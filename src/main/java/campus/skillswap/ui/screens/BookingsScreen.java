@@ -55,13 +55,17 @@ public class BookingsScreen {
     // ====================== BOOKINGS ======================
     public static void book(String teacher, String learner, String skill) {
         if (learner.equals(me.username) && me.credits < 1) { info("You need at least 1 swap credit to request a session.\nTeach a session to earn credits!"); return; }
-        JComboBox<String> day = combo(new String[7]), time = combo(new String[10]), mode = combo(new String[]{"Online", "In person"}); List<LocalDate> days = new ArrayList<>();
+        JComboBox<String> day = combo(new String[7]), time = combo(new String[10]), mode = combo(new String[]{"In person", "Offline", "Online"}); List<LocalDate> days = new ArrayList<>();
         DefaultComboBoxModel<String> dm = new DefaultComboBoxModel<>(); for (int i = 0; i < 7; i++) { LocalDate d = LocalDate.now().plusDays(i); days.add(d); dm.addElement(d.format(DateTimeFormatter.ofPattern("EEE, MMM d"))); } day.setModel(dm);
         DefaultComboBoxModel<String> tm = new DefaultComboBoxModel<>(); for (int h = 9; h < 19; h++) tm.addElement(LocalTime.of(h, 0).format(DateTimeFormatter.ofPattern("h:mm a"))); time.setModel(tm);
-        if (!ask("Book: " + skill + " (" + name(teacher) + " teaching, " + name(learner) + " learning)", form(new String[]{"Day", "Time", "Mode"}, new JComponent[]{day, time, mode}))) return;
-        Sess s = new Sess(); s.id = nextId(); s.teacher = teacher; s.learner = learner; s.skill = skill; s.mode = String.valueOf(mode.getSelectedItem()); s.status = "PENDING"; s.requester = me.username;
+        String tutorOrOther = name(teacher.equals(me.username) ? learner : teacher);
+        JCheckBox vid = check("Request a video call with " + tutorOrOther, false); vid.setEnabled(false);
+        JLabel hint = lbl("<html><body style='width:260px'>In person: meet on campus.<br>Offline: no live meeting, arrange it by chat.<br>Online: tick the box to request a video call.</body></html>", Font.PLAIN, 11, MUTED);
+        mode.addActionListener(e -> { boolean on = "Online".equals(mode.getSelectedItem()); vid.setEnabled(on); vid.setSelected(on); });
+        if (!ask("Book: " + skill + " (" + name(teacher) + " teaching, " + name(learner) + " learning)", form(new String[]{"Day", "Time", "Mode", "Video call", ""}, new JComponent[]{day, time, mode, vid, hint}))) return;
+        Sess s = new Sess(); s.id = nextId(); s.teacher = teacher; s.learner = learner; s.skill = skill; s.mode = String.valueOf(mode.getSelectedItem()); s.status = "PENDING"; s.requester = me.username; s.videoCall = "Online".equals(s.mode) && vid.isSelected();
         s.at = LocalDateTime.of(days.get(day.getSelectedIndex()), LocalTime.of(9 + time.getSelectedIndex(), 0)); S.sessions.add(s); save();
-        String o = teacher.equals(me.username) ? learner : teacher; toast("Request sent to " + name(o));
+        String o = teacher.equals(me.username) ? learner : teacher; toast("Request sent to " + name(o) + (s.videoCall ? " (video call requested)" : ""));
         bookTab = "Upcoming"; show("Bookings");
     }
     public static boolean confirm(Sess s) {
@@ -99,22 +103,32 @@ public class BookingsScreen {
     public static JComponent sessionCard(Sess s) {
         String o = other(s); boolean iLearn = s.learner.equals(me.username);
         JPanel c = card(); c.add(avatarWrap(name(o), 40), BorderLayout.WEST); JPanel inf = vbox(); JPanel h = row();
-        h.add(lbl(name(o), Font.BOLD, 13, TXT)); h.add(tag(s.status, s.status.equals("CONFIRMED") || s.status.equals("COMPLETED") ? GREEN : s.status.equals("PENDING") ? GOLD : MUTED)); h.add(tag(iLearn ? "YOU LEARN" : "YOU TEACH", BLUE)); put(inf, h);
-        put(inf, lbl(s.skill + " \u2022 1-on-1 \u2022 " + s.at.format(DF) + " \u2022 " + s.mode, Font.PLAIN, 12, MUTED));
+        h.add(lbl(name(o), Font.BOLD, 13, TXT)); h.add(tag(s.status, s.status.equals("CONFIRMED") || s.status.equals("COMPLETED") ? GREEN : s.status.equals("PENDING") ? GOLD : MUTED)); h.add(tag(iLearn ? "YOU LEARN" : "YOU TEACH", BLUE)); if (s.videoCall) h.add(tag("VIDEO CALL", GOLD)); put(inf, h);
+        put(inf, lbl(s.skill + " \u2022 1-on-1 \u2022 " + s.at.format(DF) + " \u2022 " + s.mode + (s.videoCall ? " (video call" + (s.status.equals("PENDING") && !s.requester.equals(me.username) ? " requested" : "") + ")" : ""), Font.PLAIN, 12, MUTED));
         if (s.status.equals("COMPLETED") && iLearn) put(inf, lbl(s.rating > 0 ? "Your rating: " + stars(s.rating) : "Not rated yet", Font.PLAIN, 11, GOLD));
-        c.add(inf); JPanel b = row(); b.setPreferredSize(new Dimension(230, 60));
+        c.add(inf); JPanel b = new JPanel(new GridLayout(0, 3, 6, 6)); b.setOpaque(false);
         switch (s.status) {
             case "PENDING":
                 if (s.requester.equals(me.username)) b.add(ghost("Cancel request", () -> { s.status = "CANCELLED"; save(); show("Bookings"); }));
                 else { b.add(btn("Accept", () -> { if (confirm(s)) notifyUser("Swap accepted", "Session with " + name(o) + " confirmed"); else info(name(s.learner) + " has no swap credits left."); show("Bookings"); }));
                     b.add(ghost("Decline", () -> { s.status = "DECLINED"; save(); show("Bookings"); })); } break;
             case "CONFIRMED":
-                b.add(btn("Join", () -> info("Session room: SS-" + (1000 + s.id) + "\n" + (s.mode.equals("Online") ? "Open the campus meeting room with this code." : "Meet in person at the agreed campus spot."))));
+                b.add(btn(joinLabel(s), () -> join(s)));
                 b.add(ghost("Complete", () -> complete(s))); b.add(ghost("Reschedule", () -> reschedule(s)));
                 b.add(ghost("Cancel", () -> { User l = S.users.get(s.learner); l.credits = Math.min(MAX_CREDITS, l.credits + 1); s.status = "CANCELLED"; save(); show("Bookings"); })); break;
             case "COMPLETED": if (iLearn && s.rating == 0) b.add(btn("Rate", () -> { rate(s); show("Bookings"); })); break;
             default: }
-        b.add(ghost("\u2691", () -> report(o))); c.add(b, BorderLayout.EAST); return c;
+        b.add(ghost("\u2691", () -> report(o))); JPanel bw = new JPanel(new BorderLayout()); bw.setOpaque(false); bw.add(b, BorderLayout.NORTH); c.add(bw, BorderLayout.EAST); return c;
+    }
+    /** Button text for a confirmed session, depending on how it is held. */
+    public static String joinLabel(Sess s) { return s.mode.equals("Online") ? (s.videoCall ? "Video call" : "Join") : s.mode.equals("Offline") ? "Message" : "Details"; }
+    /** Online + video call: rings the other person right now. Online: meeting-room code. Offline: opens the chat. In person: meeting details. */
+    public static void join(Sess s) {
+        String o = other(s);
+        if (s.mode.equals("Online") && s.videoCall) { campus.skillswap.service.Calls.start(o, true); return; }
+        if (s.mode.equals("Online")) { info("Session room: SS-" + (1000 + s.id) + "\nOpen the campus meeting room with this code."); return; }
+        if (s.mode.equals("Offline")) { chatWith = o; draft = ""; show("Messages"); toast("Arrange the session with " + name(o) + " here"); return; }
+        info("In-person session with " + name(o) + "\n" + s.at.format(DF) + "\nMeet at the agreed campus spot (use Messages to settle where).");
     }
     public static void reschedule(Sess s) {
         JComboBox<String> day = combo(new String[0]), time = combo(new String[0]); List<LocalDate> days = new ArrayList<>(); DefaultComboBoxModel<String> dm = new DefaultComboBoxModel<>();

@@ -67,6 +67,7 @@ public class Database {
             + " pass_hash TEXT NOT NULL, bio TEXT NOT NULL DEFAULT '', use_real_name BOOLEAN NOT NULL DEFAULT FALSE, public_ratings BOOLEAN NOT NULL DEFAULT TRUE,"
             + " nearby BOOLEAN NOT NULL DEFAULT FALSE, demo BOOLEAN NOT NULL DEFAULT FALSE, credits INT NOT NULL DEFAULT 5)",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS photo BYTEA",
         "CREATE TABLE IF NOT EXISTS user_skills(ord BIGSERIAL, username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,"
             + " kind CHAR(1) NOT NULL, skill TEXT NOT NULL, PRIMARY KEY(username, kind, skill))",
         "CREATE TABLE IF NOT EXISTS posts(id INT PRIMARY KEY, author TEXT NOT NULL, post_type TEXT NOT NULL, skill TEXT NOT NULL,"
@@ -75,6 +76,7 @@ public class Database {
         "CREATE TABLE IF NOT EXISTS post_videos(post_id INT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE, file_name TEXT NOT NULL, size_bytes BIGINT NOT NULL, data BYTEA NOT NULL)",
         "CREATE TABLE IF NOT EXISTS sessions(id INT PRIMARY KEY, teacher TEXT NOT NULL, learner TEXT NOT NULL, skill TEXT NOT NULL, sess_mode TEXT NOT NULL,"
             + " status TEXT NOT NULL, requester TEXT NOT NULL, review TEXT NOT NULL DEFAULT '', rating INT NOT NULL DEFAULT 0, starts_at TIMESTAMP NOT NULL)",
+        "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS video_call BOOLEAN NOT NULL DEFAULT FALSE",
         "CREATE TABLE IF NOT EXISTS messages(id INT PRIMARY KEY, from_user TEXT NOT NULL, to_user TEXT NOT NULL, body TEXT NOT NULL, created BIGINT NOT NULL)",
         "ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT FALSE",
@@ -85,7 +87,9 @@ public class Database {
         "CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS call_signals(id BIGSERIAL PRIMARY KEY, call_id TEXT NOT NULL, from_user TEXT NOT NULL, to_user TEXT NOT NULL, kind TEXT NOT NULL,"
             + " host TEXT NOT NULL DEFAULT '', port INT NOT NULL DEFAULT 0, video BOOLEAN NOT NULL DEFAULT FALSE, ts BIGINT NOT NULL)",
-        "CREATE INDEX IF NOT EXISTS idx_call_signals_to ON call_signals(to_user, id)"
+        "CREATE INDEX IF NOT EXISTS idx_call_signals_to ON call_signals(to_user, id)",
+        "CREATE TABLE IF NOT EXISTS chat_groups(id INT PRIMARY KEY, name TEXT NOT NULL, creator TEXT NOT NULL, created BIGINT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS chat_group_members(ord BIGSERIAL, group_id INT NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(group_id, username))"
     };
 
     public static String nz(String s) { return s == null ? "" : s; }
@@ -117,9 +121,9 @@ public class Database {
         synchronized (RL) {
             Store st = new Store();
             try (Statement s = dbRead.createStatement()) {
-                try (ResultSet r = s.executeQuery("SELECT username,real_name,email,pass_hash,bio,use_real_name,public_ratings,nearby,demo,credits,last_seen FROM users ORDER BY ord")) {
+                try (ResultSet r = s.executeQuery("SELECT username,real_name,email,pass_hash,bio,use_real_name,public_ratings,nearby,demo,credits,last_seen,photo FROM users ORDER BY ord")) {
                     while (r.next()) { User u = new User(); u.username = r.getString(1); u.realName = nz(r.getString(2)); u.email = r.getString(3); u.passHash = r.getString(4); u.bio = nz(r.getString(5));
-                        u.useRealName = r.getBoolean(6); u.publicRatings = r.getBoolean(7); u.nearby = r.getBoolean(8); u.demo = r.getBoolean(9); u.credits = r.getInt(10); u.lastSeen = r.getLong(11); st.users.put(u.username, u); } }
+                        u.useRealName = r.getBoolean(6); u.publicRatings = r.getBoolean(7); u.nearby = r.getBoolean(8); u.demo = r.getBoolean(9); u.credits = r.getInt(10); u.lastSeen = r.getLong(11); u.photo = r.getBytes(12); st.users.put(u.username, u); } }
                 try (ResultSet r = s.executeQuery("SELECT username,kind,skill FROM user_skills ORDER BY ord")) {
                     while (r.next()) { User u = st.users.get(r.getString(1)); if (u != null) (r.getString(2).equals("T") ? u.teach : u.learn).add(r.getString(3)); } }
                 try (ResultSet r = s.executeQuery("SELECT id,author,post_type,skill,category,descr,created FROM posts ORDER BY id")) {
@@ -127,11 +131,15 @@ public class Database {
                 Map<Integer, Post> pm = new HashMap<>(); for (Post p : st.posts) pm.put(p.id, p);
                 try (ResultSet r = s.executeQuery("SELECT post_id,username FROM post_likes")) { while (r.next()) { Post p = pm.get(r.getInt(1)); if (p != null) p.likes.add(r.getString(2)); } }
                 try (ResultSet r = s.executeQuery("SELECT post_id,file_name,size_bytes FROM post_videos")) { while (r.next()) { Post p = pm.get(r.getInt(1)); if (p != null) { p.videoName = r.getString(2); p.videoSize = r.getLong(3); } } }
-                try (ResultSet r = s.executeQuery("SELECT id,teacher,learner,skill,sess_mode,status,requester,review,rating,starts_at FROM sessions ORDER BY id")) {
+                try (ResultSet r = s.executeQuery("SELECT id,teacher,learner,skill,sess_mode,status,requester,review,rating,starts_at,video_call FROM sessions ORDER BY id")) {
                     while (r.next()) { Sess x = new Sess(); x.id = r.getInt(1); x.teacher = r.getString(2); x.learner = r.getString(3); x.skill = r.getString(4); x.mode = r.getString(5); x.status = r.getString(6);
-                        x.requester = r.getString(7); x.review = nz(r.getString(8)); x.rating = r.getInt(9); x.at = r.getTimestamp(10).toLocalDateTime(); st.sessions.add(x); } }
+                        x.requester = r.getString(7); x.review = nz(r.getString(8)); x.rating = r.getInt(9); x.at = r.getTimestamp(10).toLocalDateTime(); x.videoCall = r.getBoolean(11); st.sessions.add(x); } }
                 try (ResultSet r = s.executeQuery("SELECT id,from_user,to_user,body,created,edited,deleted,hidden_by FROM messages ORDER BY created,id")) {
                     while (r.next()) { Msg m = new Msg(); m.id = r.getInt(1); m.from = r.getString(2); m.to = r.getString(3); m.text = r.getString(4); m.time = r.getLong(5); m.edited = r.getBoolean(6); m.deleted = r.getBoolean(7); m.hiddenBy = nz(r.getString(8)); st.msgs.add(m); } }
+                try (ResultSet r = s.executeQuery("SELECT id,name,creator,created FROM chat_groups ORDER BY id")) {
+                    while (r.next()) { Group g = new Group(); g.id = r.getInt(1); g.name = nz(r.getString(2)); g.creator = nz(r.getString(3)); g.created = r.getLong(4); st.groups.add(g); } }
+                Map<Integer, Group> gm = new HashMap<>(); for (Group g : st.groups) gm.put(g.id, g);
+                try (ResultSet r = s.executeQuery("SELECT group_id,username FROM chat_group_members ORDER BY ord")) { while (r.next()) { Group g = gm.get(r.getInt(1)); if (g != null) g.members.add(r.getString(2)); } }
                 try (ResultSet r = s.executeQuery("SELECT id,by_user,target,reason,details,created FROM reports ORDER BY id")) {
                     while (r.next()) { Report x = new Report(); x.id = r.getInt(1); x.by = r.getString(2); x.target = r.getString(3); x.reason = r.getString(4); x.details = nz(r.getString(5)); x.time = r.getLong(6); st.reports.add(x); } }
                 try (ResultSet r = s.executeQuery("SELECT v FROM meta WHERE k='last_sync'")) { if (r.next()) st.lastSync = r.getString(1); }
@@ -143,11 +151,12 @@ public class Database {
     /** One short fingerprint per row; save() only writes rows whose fingerprint changed, so two clients rarely overwrite each other. */
     public static Map<String, String> fingerprints(Store st) {
         Map<String, String> m = new HashMap<>();
-        for (User u : st.users.values()) m.put("u:" + u.username, j(nz(u.realName), u.email, u.passHash, nz(u.bio), u.useRealName, u.publicRatings, u.nearby, u.demo, u.credits, String.join("\u0002", u.teach), String.join("\u0002", u.learn)));
+        for (User u : st.users.values()) m.put("u:" + u.username, j(nz(u.realName), u.email, u.passHash, nz(u.bio), u.useRealName, u.publicRatings, u.nearby, u.demo, u.credits, u.photo == null ? 0 : Arrays.hashCode(u.photo), String.join("\u0002", u.teach), String.join("\u0002", u.learn)));
         for (Post p : st.posts) m.put("p:" + p.id, pfp(p));
-        for (Sess s : st.sessions) m.put("s:" + s.id, j(s.teacher, s.learner, s.skill, s.mode, s.status, s.requester, nz(s.review), s.rating, s.at.truncatedTo(ChronoUnit.SECONDS)));
+        for (Sess s : st.sessions) m.put("s:" + s.id, j(s.teacher, s.learner, s.skill, s.mode, s.status, s.requester, nz(s.review), s.rating, s.at.truncatedTo(ChronoUnit.SECONDS), s.videoCall));
         for (Msg x : st.msgs) m.put("m:" + x.id, j(x.text, x.edited, x.deleted, nz(x.hiddenBy)));
         for (Report x : st.reports) m.put("r:" + x.id, "");
+        for (Group g : st.groups) m.put("g:" + g.id, j(g.name, g.creator, String.join("\u0002", g.members)));
         m.put("meta:sync", st.lastSync);
         return m;
     }
@@ -165,6 +174,7 @@ public class Database {
                 for (Sess s : S.sessions) if (chg("s:" + s.id, now)) writeSess(s);
                 for (Msg m : S.msgs) if (chg("m:" + m.id, now)) writeMsg(m);
                 for (Report r : S.reports) if (chg("r:" + r.id, now)) writeReport(r);
+                for (Group g : S.groups) if (chg("g:" + g.id, now)) writeGroup(g);
                 if (chg("meta:sync", now)) try (PreparedStatement p = db.prepareStatement("INSERT INTO meta(k,v) VALUES('last_sync',?) ON CONFLICT(k) DO UPDATE SET v=EXCLUDED.v")) { p.setString(1, S.lastSync); p.executeUpdate(); }
                 for (String k : snap.keySet()) if (k.startsWith("p:") && !now.containsKey(k))
                     try (PreparedStatement p = db.prepareStatement("DELETE FROM posts WHERE id=?")) { p.setInt(1, Integer.parseInt(k.substring(2))); p.executeUpdate(); }
@@ -174,11 +184,11 @@ public class Database {
         } catch (SQLException e) { toast("Database error: " + nz(e.getMessage()).split("\n")[0]); }
     }
     public static void writeUser(User u) throws SQLException {
-        try (PreparedStatement p = db.prepareStatement("INSERT INTO users(username,real_name,email,pass_hash,bio,use_real_name,public_ratings,nearby,demo,credits) VALUES(?,?,?,?,?,?,?,?,?,?) "
+        try (PreparedStatement p = db.prepareStatement("INSERT INTO users(username,real_name,email,pass_hash,bio,use_real_name,public_ratings,nearby,demo,credits,photo) VALUES(?,?,?,?,?,?,?,?,?,?,?) "
                 + "ON CONFLICT(username) DO UPDATE SET real_name=EXCLUDED.real_name,email=EXCLUDED.email,pass_hash=EXCLUDED.pass_hash,bio=EXCLUDED.bio,use_real_name=EXCLUDED.use_real_name,"
-                + "public_ratings=EXCLUDED.public_ratings,nearby=EXCLUDED.nearby,demo=EXCLUDED.demo,credits=EXCLUDED.credits")) {
+                + "public_ratings=EXCLUDED.public_ratings,nearby=EXCLUDED.nearby,demo=EXCLUDED.demo,credits=EXCLUDED.credits,photo=EXCLUDED.photo")) {
             p.setString(1, u.username); p.setString(2, nz(u.realName)); p.setString(3, u.email); p.setString(4, u.passHash); p.setString(5, nz(u.bio)); p.setBoolean(6, u.useRealName);
-            p.setBoolean(7, u.publicRatings); p.setBoolean(8, u.nearby); p.setBoolean(9, u.demo); p.setInt(10, u.credits); p.executeUpdate();
+            p.setBoolean(7, u.publicRatings); p.setBoolean(8, u.nearby); p.setBoolean(9, u.demo); p.setInt(10, u.credits); p.setBytes(11, u.photo); p.executeUpdate();
         }
         try (PreparedStatement d = db.prepareStatement("DELETE FROM user_skills WHERE username=?")) { d.setString(1, u.username); d.executeUpdate(); }
         try (PreparedStatement p = db.prepareStatement("INSERT INTO user_skills(username,kind,skill) VALUES(?,?,?) ON CONFLICT DO NOTHING")) {
@@ -198,11 +208,11 @@ public class Database {
         }
     }
     public static void writeSess(Sess s) throws SQLException {
-        try (PreparedStatement p = db.prepareStatement("INSERT INTO sessions(id,teacher,learner,skill,sess_mode,status,requester,review,rating,starts_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+        try (PreparedStatement p = db.prepareStatement("INSERT INTO sessions(id,teacher,learner,skill,sess_mode,status,requester,review,rating,starts_at,video_call) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
                 + "teacher=EXCLUDED.teacher,learner=EXCLUDED.learner,skill=EXCLUDED.skill,sess_mode=EXCLUDED.sess_mode,status=EXCLUDED.status,requester=EXCLUDED.requester,review=EXCLUDED.review,"
-                + "rating=EXCLUDED.rating,starts_at=EXCLUDED.starts_at")) {
+                + "rating=EXCLUDED.rating,starts_at=EXCLUDED.starts_at,video_call=EXCLUDED.video_call")) {
             p.setInt(1, s.id); p.setString(2, s.teacher); p.setString(3, s.learner); p.setString(4, s.skill); p.setString(5, s.mode); p.setString(6, s.status); p.setString(7, s.requester);
-            p.setString(8, nz(s.review)); p.setInt(9, s.rating); p.setTimestamp(10, Timestamp.valueOf(s.at)); p.executeUpdate();
+            p.setString(8, nz(s.review)); p.setInt(9, s.rating); p.setTimestamp(10, Timestamp.valueOf(s.at)); p.setBoolean(11, s.videoCall); p.executeUpdate();
         }
     }
     public static void writeMsg(Msg m) throws SQLException {
@@ -210,6 +220,15 @@ public class Database {
                 + "ON CONFLICT(id) DO UPDATE SET body=EXCLUDED.body,edited=EXCLUDED.edited,deleted=EXCLUDED.deleted,hidden_by=EXCLUDED.hidden_by")) {
             p.setInt(1, m.id); p.setString(2, m.from); p.setString(3, m.to); p.setString(4, nz(m.text)); p.setLong(5, m.time);
             p.setBoolean(6, m.edited); p.setBoolean(7, m.deleted); p.setString(8, nz(m.hiddenBy)); p.executeUpdate();
+        }
+    }
+    public static void writeGroup(Group g) throws SQLException {
+        try (PreparedStatement p = db.prepareStatement("INSERT INTO chat_groups(id,name,creator,created) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,creator=EXCLUDED.creator")) {
+            p.setInt(1, g.id); p.setString(2, g.name); p.setString(3, g.creator); p.setLong(4, g.created); p.executeUpdate();
+        }
+        try (PreparedStatement d = db.prepareStatement("DELETE FROM chat_group_members WHERE group_id=?")) { d.setInt(1, g.id); d.executeUpdate(); }
+        try (PreparedStatement p = db.prepareStatement("INSERT INTO chat_group_members(group_id,username) VALUES(?,?) ON CONFLICT DO NOTHING")) {
+            for (String u : g.members) { p.setInt(1, g.id); p.setString(2, u); p.addBatch(); } p.executeBatch();
         }
     }
     public static void writeReport(Report r) throws SQLException {

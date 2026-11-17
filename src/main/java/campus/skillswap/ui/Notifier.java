@@ -73,7 +73,7 @@ public class Notifier {
     public static void checkReminders() {
         if (me == null) return; LocalDateTime now = LocalDateTime.now();
         for (Sess s : S.sessions) if (s.status.equals("CONFIRMED") && !remindedIds.contains(s.id) && involves(s, me) && s.at.isAfter(now.minusMinutes(5)) && s.at.isBefore(now.plusMinutes(60))) {
-            remindedIds.add(s.id); notifyUser("Upcoming session", s.skill + " with " + name(other(s)) + " at " + s.at.format(DateTimeFormatter.ofPattern("h:mm a")));
+            remindedIds.add(s.id); notifyUser("Upcoming session", s.skill + " with " + name(other(s)) + " at " + s.at.format(DateTimeFormatter.ofPattern("h:mm a")) + (s.videoCall ? " - video call, open Bookings to start it" : ""));
         }
     }
 }
