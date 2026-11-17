@@ -83,8 +83,8 @@ public class LanSync {
     public static void startHost(int port) throws Exception {
         ServerSocket ss = new ServerSocket(port);                    // fails right away if the port is already in use
         stop(); server = ss; code = String.format("%04d", new Random().nextInt(10000)); mode = "host"; address = lanIp() + ":" + port;
-        try (InputStream in = Files.newInputStream(DATA)) { S = (Store) unpack(in.readAllBytes()); }
-        catch (Exception e) { S = new Store(); seed(); }
+        try (InputStream in = Files.newInputStream(DATA)) { S = (Store) unpack(in.readAllBytes()); List<?> gl = S.groups; gl.removeIf(o -> !(o instanceof Group)); }   // groups saved by an older build are dropped instead of crashing
+        catch (Exception e) { if (Files.exists(DATA)) try { Files.move(DATA, DIR.resolve("lan-data.old"), StandardCopyOption.REPLACE_EXISTING); } catch (IOException x) { } S = new Store(); seed(); }   // unreadable file: keep it as lan-data.old and start fresh
         persist(); snap = fingerprints(S);
         Thread t = new Thread(() -> { while (!ss.isClosed()) { try { Socket c = ss.accept(); Thread h = new Thread(() -> handle(c), "lan-client"); h.setDaemon(true); h.start(); } catch (IOException e) { break; } } }, "lan-accept");
         t.setDaemon(true); t.start();

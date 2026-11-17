@@ -345,7 +345,8 @@ public class MessagesScreen {
         JPanel av = new JPanel(new GridBagLayout()); av.setOpaque(false); av.add(groupAvatar(g, 62));
         JPanel west = new JPanel(new BorderLayout(10, 0)); west.setOpaque(false); west.add(bar, BorderLayout.WEST); west.add(av);
         JPanel mid = new JPanel(new GridBagLayout()); mid.setOpaque(false); GridBagConstraints gc = new GridBagConstraints(); gc.anchor = GridBagConstraints.WEST; gc.weightx = 1;
-        JPanel tv = vbox(); put(tv, lbl(g.name, Font.BOLD, 16, nameC)); put(tv, lbl("GROUP \u2022 " + g.members.size() + " members", Font.BOLD, 10, sel ? ONACC : MUTED)); mid.add(tv, gc);
+        JPanel tv = vbox(); put(tv, lbl(g.name, Font.BOLD, 16, nameC)); boolean inCall = campus.skillswap.service.GroupCalls.inRoom(g.id) || !campus.skillswap.service.GroupCalls.liveUsers(g).isEmpty();
+        put(tv, lbl("GROUP \u2022 " + g.members.size() + " members" + (inCall ? "  \u25CF IN A CALL" : ""), Font.BOLD, 10, inCall ? (sel ? ONACC : GREEN) : (sel ? ONACC : MUTED))); mid.add(tv, gc);
         r.add(west, BorderLayout.WEST); r.add(mid);
         if (last > 0) { JPanel e = new JPanel(new BorderLayout()); e.setOpaque(false); e.add(lbl(tshort(last), Font.BOLD, 12, nameC), BorderLayout.NORTH); r.add(e, BorderLayout.EAST); }
         String key = g.key(); r.addMouseListener(new MouseAdapter() { public void mouseClicked(MouseEvent ev) { chatWith = key; draft = ""; editing = 0; show("Messages"); } });
@@ -372,9 +373,18 @@ public class MessagesScreen {
         put(hv, lbl(gr.name, Font.BOLD, 20, TXT)); put(hv, lbl(membersLine(gr), Font.PLAIN, 13, MUTED)); GridBagConstraints g = new GridBagConstraints(); g.anchor = GridBagConstraints.WEST; g.weightx = 1; hi.add(hv, g);
         JPanel hb = new JPanel(new GridBagLayout()); hb.setOpaque(false); JPanel hbr = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0)); hbr.setOpaque(false);
         hbr.add(ghost("Members", () -> groupMembers(gr)));
-        boolean inThis = campus.skillswap.service.GroupCalls.activeGroupId() == gr.id;
-        JButton vc = btn(inThis ? "Back to call" : "Group call", () -> campus.skillswap.service.GroupCalls.start(gr)); vc.setBackground(GREEN); vc.setForeground(ONACC); vc.setFont(f(Font.BOLD, 16)); vc.setBorder(new EmptyBorder(10, 18, 10, 18)); hbr.add(vc);
-        hb.add(hbr); h.add(hav, BorderLayout.WEST); h.add(hi); h.add(hb, BorderLayout.EAST); return h;
+        final boolean inThis = campus.skillswap.service.GroupCalls.inRoom(gr.id); final List<String> liveU = campus.skillswap.service.GroupCalls.liveUsers(gr); final boolean running = !inThis && !liveU.isEmpty(), isFull = running && campus.skillswap.service.GroupCalls.full(gr);
+        JButton vc = btn(inThis ? "Back to call" : isFull ? "Call is full" : running ? "Join call" : "Group call", () -> campus.skillswap.service.GroupCalls.start(gr)); vc.setBackground(GREEN); vc.setForeground(ONACC); vc.setFont(f(Font.BOLD, 16)); vc.setBorder(new EmptyBorder(10, 18, 10, 18)); vc.setEnabled(!isFull); hbr.add(vc);
+        hb.add(hbr); h.add(hav, BorderLayout.WEST); h.add(hi); h.add(hb, BorderLayout.EAST);
+        if (!inThis && !running) return h;
+        // "call in progress" strip under the header, like Messenger / Meet: who is in it and a Join button
+        JPanel north = new JPanel(new BorderLayout()); north.setBackground(BG); north.add(h);
+        JPanel ban = new JPanel(new BorderLayout(10, 0)); ban.setBackground(YEL); ban.setBorder(new CompoundBorder(new MatteBorder(0, 0, CB, 0, divider()), new EmptyBorder(8, 26, 8, 26)));
+        String who = liveU.stream().map(u -> name(u)).collect(Collectors.joining(", "));
+        int n = campus.skillswap.service.GroupCalls.liveCount(gr);
+        ban.add(lbl(inThis ? "\u25CF You are in this call" + (who.isEmpty() ? "" : " with " + who) : "\u25CF Call in progress (" + n + " of " + campus.skillswap.service.GroupCalls.MAX_PEOPLE + "): " + who, Font.BOLD, 13, ONACC));
+        if (!isFull) { JButton jb = ghost(inThis ? "Open" : "Join", () -> campus.skillswap.service.GroupCalls.start(gr)); jb.setFont(f(Font.BOLD, 11)); jb.setBorder(new EmptyBorder(4, 14, 4, 14)); ban.add(jb, BorderLayout.EAST); }
+        north.add(ban, BorderLayout.SOUTH); return north;
     }
     public static JComponent messagesPage() {
         JPanel rt = new JPanel(new BorderLayout()); rt.setBackground(BG);

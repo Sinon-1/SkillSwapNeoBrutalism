@@ -35,7 +35,9 @@ Call history ("Video call (2:31)", "Missed video call") is added to the chat.
   the creator can also rename the group and remove people. Group messages are normal rows in `messages` with `to_user = 'g:<id>'`;
   the groups themselves are in `chat_groups` / `chat_group_members` (created automatically).
 * **Group video call** - press **Group call** in a group chat (up to 6 people, online members only). If nobody is in the call yet, the other
-  online members get a ringing window with **Join call**; if a call is already running you simply join it (the button turns into **Back to call**).
+  online members get a ringing window with **Join call**; if a call is already running you simply join it, like in Messenger: the group chat shows a yellow **Call in progress (3 of 6): Ana, Ben** strip with a **Join** button, the header button turns into **Join call**,
+  and the chat list tags the group "IN A CALL". Joining a running call never rings anybody; when you are in it the button turns into **Back to call**. A full call (6 people) shows **Call is full**.
+  (Behind the scenes everyone in a call sends a small "still running" signal every 5 seconds to the group members who are not in it yet, and a "left" signal when they hang up.)
   Everybody connects directly to everybody (no server), exactly like 1-to-1 calls, so use headphones and stay on the same network.
   A green border shows who is speaking; a red mic icon shows who is muted.
 * **Emotes** - press **EMOTES** during any call (1-to-1 or group) and pick Good, Love it, Haha, Wow, Got it!, Confused, Great job or Yay!.

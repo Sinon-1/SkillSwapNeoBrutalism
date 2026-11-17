@@ -174,7 +174,7 @@ public class Calls {
     public static void onSignal(CallSig s) {
         if (me == null || s == null || !s.to.equals(me.username)) return;
         if (Math.abs(System.currentTimeMillis() - s.ts) > 90_000) return;           // old leftovers
-        if (s.kind != null && s.kind.startsWith("G")) { GroupCalls.onSignal(s); return; }   // group call setup (GJOIN / GRING / GHERE / GEND)
+        if (s.kind != null && s.kind.startsWith("G")) { GroupCalls.onSignal(s); return; }   // group call setup (GJOIN / GRING / GHERE / GEND / GBEAT / GLEAVE / GFULL)
         boolean mine = s.callId != null && s.callId.equals(callId);
         switch (s.kind) {
             case "INVITE": if (state != 0 || GroupCalls.active()) sendSig("BUSY", s.from, s.callId, "", 0, s.video); else incoming(s); break;
@@ -192,7 +192,7 @@ public class Calls {
         try (PreparedStatement p = db.prepareStatement("INSERT INTO call_signals(call_id,from_user,to_user,kind,host,port,video,ts) VALUES(?,?,?,?,?,?,?,?)")) {
             p.setString(1, id); p.setString(2, s.from); p.setString(3, to); p.setString(4, kind); p.setString(5, host); p.setInt(6, port); p.setBoolean(7, vid); p.setLong(8, s.ts); p.executeUpdate();
         } catch (SQLException e) { toast("Call signal failed: " + nz(e.getMessage()).split("\n")[0]); }
-        if (kind.equals("INVITE")) try (PreparedStatement d = db.prepareStatement("DELETE FROM call_signals WHERE ts<?")) { d.setLong(1, System.currentTimeMillis() - 600_000); d.executeUpdate(); } catch (SQLException e) { }
+        if (kind.equals("INVITE") || kind.equals("GJOIN")) try (PreparedStatement d = db.prepareStatement("DELETE FROM call_signals WHERE ts<?")) { d.setLong(1, System.currentTimeMillis() - 600_000); d.executeUpdate(); } catch (SQLException e) { }
     }
 
     // ---- database mode: look for new setup messages every second

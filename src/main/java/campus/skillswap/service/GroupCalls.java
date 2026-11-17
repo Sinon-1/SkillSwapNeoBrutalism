@@ -28,30 +28,84 @@ import static campus.skillswap.ui.Notifier.*;
  *  - GHERE  "so am I, here is my address"                                (answer to GJOIN / GRING)
  *  - GRING  "nobody was in the call, please join"                         (rings members who are not in the call)
  *  - GEND   "the person who rang has left before anyone joined"
+ *  - GBEAT  "the call is still running, I am in it"  (every BEAT_MS, to online members who are not in the call yet)
+ *  - GLEAVE "I have left the call"
+ *  - GFULL  "the call already has MAX_PEOPLE in it"   (answer to a GJOIN)
+ * GJOIN / GHERE / GRING / GBEAT all tell the others "this person is in a call of this group", so every member's app knows
+ * whether a call is running ({@link #liveUsers}) and can show a "Call in progress - Join" banner, like Messenger.
  * callId is "G" + groupId + ":" + ticket, where the ticket is a random secret of the sender's listening socket.
  * Of every pair, the person whose user name sorts later opens the connection, so there are never two connections.
  * In GJOIN / GHERE the CallSig.video flag means "I have been in this call for a few seconds" (see established()).
  */
 public class GroupCalls {
     public static final int MAX_PEOPLE = 6;
-    static final int RING_MS = 40_000, PROBE_MS = 3_000;
+    static final int RING_MS = 40_000, PROBE_MS = 3_000, BEAT_MS = 5_000;
+    static final long LIVE_TTL = 14_000;                // someone counts as "in the call" until we have not heard from them for this long
     static final String SYS = "\u0001";                    // marks a chat line that is a notice, not typed text
 
     static class Peer { final String user; final CallLink link; final Tile tile; Peer(String u, CallLink l, Tile t) { user = u; link = l; tile = t; } }
 
-    static boolean active, starter, ringSent, sawEstablished, everHadPeers, camOn, muted, handUp;
+    static boolean active, starter, ringSent, sawEstablished, everHadPeers, camOn, muted, handUp, joinedLive, heardAny;
+    static int beatTick;
     static Group group; static String ticket, ip; static int port; static long startedAt;
     static ServerSocket ss; static GroupCallWindow win; static Tile mine; static Camera cam; static Audio audio;
     static final Map<String, Peer> peers = new LinkedHashMap<>();
     static final Set<String> connecting = new HashSet<>();
     static final List<CallLink> links = new CopyOnWriteArrayList<>();      // read by the camera / microphone threads
     static javax.swing.Timer probeTimer, tickTimer;
+    // who is in a running call of each group (seen through GJOIN / GHERE / GRING / GBEAT): group id -> (user -> when we last heard from them)
+    static final Map<Integer, Map<String, Long>> live = new HashMap<>();
+    static javax.swing.Timer liveTimer; static String shownSig = "";
     // incoming ring
     static GroupCallWindow ringWin; static Group ringGroup; static javax.swing.Timer ringTimer, beepTimer;
 
     public static boolean active() { return active; }
     public static int activeGroupId() { return active && group != null ? group.id : -1; }
     public static void focus() { GroupCallWindow w = win; if (w != null) { w.setState(java.awt.Frame.NORMAL); w.toFront(); } }
+    /** True while I am in the call of this group. */
+    public static boolean inRoom(int groupId) { return active && group != null && group.id == groupId; }
+    /** The other people who are in a running call of this group right now (not me). Empty = no call is running, or only I am in it. */
+    public static List<String> liveUsers(Group g) {
+        List<String> l = new ArrayList<>(); if (g == null || me == null) return l;
+        if (inRoom(g.id)) { l.addAll(peers.keySet()); return l; }
+        long now = System.currentTimeMillis();
+        synchronized (live) { Map<String, Long> m = live.get(g.id); if (m != null) for (Map.Entry<String, Long> e : m.entrySet()) if (now - e.getValue() <= LIVE_TTL && g.has(e.getKey()) && !e.getKey().equals(me.username)) l.add(e.getKey()); }
+        Collections.sort(l); return l;
+    }
+    /** How many people are in the call of this group (including me when I am in it). */
+    public static int liveCount(Group g) { return liveUsers(g).size() + (g != null && inRoom(g.id) ? 1 : 0); }
+    /** A call is running in this group and I am not in it. */
+    public static boolean joinable(Group g) { return g != null && !inRoom(g.id) && !liveUsers(g).isEmpty(); }
+    public static boolean full(Group g) { return liveCount(g) >= MAX_PEOPLE; }
+
+    static void markLive(int gid, String user) {
+        synchronized (live) { live.computeIfAbsent(gid, k -> new HashMap<>()).put(user, System.currentTimeMillis()); }
+        if (liveTimer == null) { liveTimer = new javax.swing.Timer(2000, e -> pruneLive()); liveTimer.start(); }
+        liveChanged();
+    }
+    static void unmarkLive(int gid, String user) {
+        synchronized (live) { Map<String, Long> m = live.get(gid); if (m != null) { m.remove(user); if (m.isEmpty()) live.remove(gid); } }
+        liveChanged();
+    }
+    static void pruneLive() {
+        long now = System.currentTimeMillis(); boolean any;
+        synchronized (live) {
+            for (Iterator<Map.Entry<Integer, Map<String, Long>>> it = live.entrySet().iterator(); it.hasNext(); ) { Map<String, Long> m = it.next().getValue(); m.values().removeIf(t -> now - t > LIVE_TTL); if (m.isEmpty()) it.remove(); }
+            any = !live.isEmpty();
+        }
+        liveChanged();
+        if (!any && liveTimer != null) { liveTimer.stop(); liveTimer = null; }
+    }
+    /** Redraw the Messages page when who-is-in-a-call changed (banner, Join button, "in a call" tag in the chat list). */
+    static void liveChanged() {
+        if (me == null || S == null) return;
+        StringBuilder sb = new StringBuilder();
+        for (Group g : S.groups) if (g.has(me.username)) { List<String> u = liveUsers(g); if (!u.isEmpty() || inRoom(g.id)) sb.append(g.id).append(inRoom(g.id) ? "*" : "").append(u).append(';'); }
+        String sig = sb.toString(); if (sig.equals(shownSig)) return;
+        shownSig = sig;
+        if (busy > 0 || campus.skillswap.ui.media.Videos.videoOpen()) { shownSig = "?"; return; }       // a dialog / video is open: try again on the next tick
+        if (campus.skillswap.ui.AppShell.page.equals("Messages")) campus.skillswap.ui.AppShell.show("Messages");
+    }
 
     // ---------------------------------------------------------------- starting / joining
     /** The "Group call" button: joins the call of this group if one is running, otherwise starts one and rings the others. */
@@ -60,7 +114,9 @@ public class GroupCalls {
         if (!connected()) { toast("Connect to the database or a LAN host first"); return; }
         if (active) { if (group.id == g.id) focus(); else toast("You are already in a call"); return; }
         if (Calls.inCall()) { toast("You are already in a call"); return; }
-        if (online(g).isEmpty()) { toast("Nobody else in " + g.name + " is online right now"); return; }
+        boolean running = !liveUsers(g).isEmpty();
+        if (running && full(g)) { toast("This call is full (" + MAX_PEOPLE + " people)"); return; }
+        if (!running && online(g).isEmpty()) { toast("Nobody else in " + g.name + " is online right now"); return; }
         join(g, true);
     }
     static List<String> online(Group g) {
@@ -73,14 +129,16 @@ public class GroupCalls {
     static void announce(String kind) { for (String u : online(group)) Calls.sendSig(kind, u, myCallId(), ip, port, established()); }
 
     static void join(Group g, boolean ring) {
+        final boolean running = !liveUsers(g).isEmpty();                                           // must be read before 'active' is set: a call of this group is already going
         final ServerSocket mineSock;
         try { mineSock = new ServerSocket(0); } catch (IOException e) { toast("Could not start the call: " + e.getMessage()); return; }
         closeRing(null);
         ss = mineSock; port = mineSock.getLocalPort(); ip = Calls.myIp(); ticket = Long.toString(new java.security.SecureRandom().nextLong() & Long.MAX_VALUE, 36);
-        group = g; active = true; starter = ring; ringSent = false; sawEstablished = false; everHadPeers = false; camOn = true; muted = false; handUp = false;
+        group = g; active = true; starter = ring; ringSent = false; sawEstablished = false; everHadPeers = false; camOn = true; muted = false; handUp = false; heardAny = false; beatTick = 0;
+        joinedLive = running;                                                                   // a call is already running: join it quietly instead of ringing everybody
         startedAt = System.currentTimeMillis(); peers.clear(); connecting.clear(); links.clear();
         mine = new Tile(me.username, name(me), true);
-        win = new GroupCallWindow(g, me.username, ACTIONS); win.addTile(mine); win.setMode(Mode.ACTIVE, "Looking for the others..."); win.open();
+        win = new GroupCallWindow(g, me.username, ACTIONS); win.addTile(mine); win.setMode(Mode.ACTIVE, joinedLive ? "Joining the call..." : "Looking for the others..."); win.open();
         final String tk = ticket; Thread t = new Thread(() -> acceptLoop(mineSock, tk), "gcall-accept"); t.setDaemon(true); t.start();
         audio = new Audio();
         String warn = audio.start(chunk -> {
@@ -90,8 +148,25 @@ public class GroupCalls {
         if (warn != null) toast(warn);
         startCamera();
         announce("GJOIN");
-        if (ring) { probeTimer = new javax.swing.Timer(PROBE_MS, e -> { if (active && !sawEstablished) ring(); }); probeTimer.setRepeats(false); probeTimer.start(); }
-        tickTimer = new javax.swing.Timer(1000, e -> updateStatus()); tickTimer.start();
+        if (ring) { probeTimer = new javax.swing.Timer(PROBE_MS, e -> probe()); probeTimer.setRepeats(false); probeTimer.start(); }
+        tickTimer = new javax.swing.Timer(1000, e -> { updateStatus(); if (++beatTick % (BEAT_MS / 1000) == 0) beat(); liveChanged(); }); tickTimer.start();
+        liveChanged();
+    }
+    /** Three seconds after pressing the button: if nobody who is already in the call answered, ring the others. */
+    static void probe() {
+        if (!active) return;
+        if (joinedLive) {
+            if (heardAny) return;                                                                  // somebody answered: we are joining a real call, never ring
+            synchronized (live) { live.remove(group.id); }                                         // nobody answered: the call had already ended, so this becomes a new call
+            if (win != null) win.flash("That call had already ended - starting a new one");
+            joinedLive = false; ring(); return;
+        }
+        if (!sawEstablished) ring();
+    }
+    /** Tell the members who are not in the call yet that it is still running (this is what keeps their "Call in progress" banner alive). */
+    static void beat() {
+        if (!active || group == null) return;
+        for (String u : online(group)) if (!peers.containsKey(u)) Calls.sendSig("GBEAT", u, myCallId(), ip, port, established());
     }
     /** Nobody who was already in the call answered: ring the members who are not in it and leave a note in the chat. */
     static void ring() {
@@ -115,19 +190,26 @@ public class GroupCalls {
         if (g == null || !g.has(me.username) || !g.has(s.from)) return;                       // members only
         boolean here = active && group.id == gid;
         switch (s.kind) {
-            case "GJOIN": if (here) onPresent(s, tk, true); break;
-            case "GRING": if (here) onPresent(s, tk, true); else if (!active && !Calls.inCall() && ringWin == null) incoming(g, s.from); break;
-            case "GHERE": if (here) onPresent(s, tk, false); break;
-            case "GEND": if (ringWin != null && ringGroup.id == gid) closeRing("Missed group call"); break;
+            case "GJOIN": markLive(gid, s.from); if (here) onPresent(s, tk, true); break;
+            case "GRING": markLive(gid, s.from); if (here) onPresent(s, tk, true); else if (!active && !Calls.inCall() && ringWin == null) incoming(g, s.from); break;
+            case "GHERE": markLive(gid, s.from); if (here) onPresent(s, tk, false); break;
+            case "GBEAT": markLive(gid, s.from); break;
+            case "GLEAVE": unmarkLive(gid, s.from); break;
+            case "GFULL": if (here && joinedLive && !everHadPeers) { toast("This call is full (" + MAX_PEOPLE + " people)"); leave(); } break;
+            case "GEND": unmarkLive(gid, s.from); if (ringWin != null && ringGroup.id == gid) closeRing("Missed group call"); break;
             default: break;
         }
     }
     /** Someone in the same group call announced itself (reply = true: tell them we are here too). */
     static void onPresent(CallSig s, String tk, boolean reply) {
-        if (s.video) sawEstablished = true;
+        heardAny = true; if (s.video) sawEstablished = true;
+        boolean known = peers.containsKey(s.from) || connecting.contains(s.from);
+        if (!known && peers.size() + connecting.size() + 1 >= MAX_PEOPLE) {                       // no room: say so instead of leaving the newcomer waiting
+            if (reply) Calls.sendSig("GFULL", s.from, myCallId(), "", 0, false);
+            return;
+        }
         if (reply) Calls.sendSig("GHERE", s.from, myCallId(), ip, port, established());
-        if (peers.containsKey(s.from) || connecting.contains(s.from)) return;
-        if (peers.size() + connecting.size() + 1 >= MAX_PEOPLE) return;
+        if (known) return;
         if (me.username.compareTo(s.from) > 0) connect(s.from, s.host, s.port, tk);          // the later name connects, the other one waits for it
     }
 
@@ -180,11 +262,11 @@ public class GroupCalls {
         l.onClose = () -> SwingUtilities.invokeLater(() -> removePeer(user, l));
         peers.put(user, p); links.add(l); everHadPeers = true; win.addTile(t); l.start();
         l.sendCam(camOn); l.sendMic(!muted); if (handUp) l.sendHand(true);                            // tell the newcomer our current state
-        win.flash(name(user) + " joined"); updateStatus();
+        win.flash(name(user) + " joined"); updateStatus(); liveChanged();
     }
     static void removePeer(String user, CallLink l) {
         Peer p = peers.get(user); if (!active || p == null || p.link != l) return;
-        peers.remove(user); links.remove(l); if (win != null) { win.removeTile(user); win.flash(name(user) + " left"); } updateStatus();
+        peers.remove(user); links.remove(l); if (win != null) { win.removeTile(user); win.flash(name(user) + " left"); } updateStatus(); liveChanged();
     }
 
     // ---------------------------------------------------------------- camera / controls
@@ -216,17 +298,22 @@ public class GroupCalls {
         if (!active) return;
         final Group g = group; final boolean alone = peers.isEmpty(), had = everHadPeers, rang = ringSent; final long secs = (System.currentTimeMillis() - startedAt) / 1000;
         if (alone && rang) for (String u : online(g)) Calls.sendSig("GEND", u, myCallId(), ip, port, false);   // stop the ringing of people who did not join
+        for (String u : online(g)) Calls.sendSig("GLEAVE", u, myCallId(), "", 0, false);                  // clears my name from their "Call in progress" banner at once
+        final Set<String> stillIn = new HashSet<>(peers.keySet());
         active = false; stopTimers(); stopCamera();
         for (CallLink l : links) l.bye();
         if (audio != null) { audio.stop(); audio = null; }
         if (ss != null) { try { ss.close(); } catch (IOException e) { } ss = null; }
         for (CallLink l : links) l.close();
-        links.clear(); peers.clear(); connecting.clear();
+        links.clear(); peers.clear(); connecting.clear(); joinedLive = false;
+        synchronized (live) { live.remove(g.id); }
+        for (String u : stillIn) markLive(g.id, u);                                                        // the call goes on without me: keep showing Join
         GroupCallWindow w = win; win = null; if (w != null) w.ended("You left the call");
         if (me != null) {
             if (had && alone) MessagesLog.add(g.key(), SYS + "Group video call ended (" + Calls.dur(secs) + ")");           // the last person to leave writes the summary
             else if (!had && rang) MessagesLog.add(g.key(), SYS + "Missed group video call from " + name(me));
         }
+        liveChanged();
     }
     static void stopTimers() {
         if (probeTimer != null) { probeTimer.stop(); probeTimer = null; }
