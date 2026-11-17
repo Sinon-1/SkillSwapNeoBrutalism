@@ -423,8 +423,22 @@ public class MessagesScreen {
         if (chatWith == null || (grp ? gr == null : o == null)) {
             JPanel e = new JPanel(new GridBagLayout()); e.setOpaque(false); e.add(lbl("Select a conversation to start chatting", Font.PLAIN, 14, MUTED)); right.add(e);
         } else {
+<<<<<<< HEAD
             final String target = chatWith;
             right.add(grp ? groupHeader(gr) : dmHeader(o), BorderLayout.NORTH);
+=======
+            final User o = S.users.get(chatWith);
+            JPanel h = new JPanel(new BorderLayout(14, 0)); h.setBackground(BG); h.setBorder(new CompoundBorder(new MatteBorder(0, 0, CB, 0, divider()), new EmptyBorder(14, 26, 14, 26)));
+            JPanel hav = new JPanel(new GridBagLayout()); hav.setOpaque(false); hav.add(person(ring(o.username), 58, () -> o.photo));
+            JPanel hi = new JPanel(new GridBagLayout()); hi.setOpaque(false); JPanel hv = vbox();
+            put(hv, lbl(name(o), Font.BOLD, 20, TXT)); put(hv, lbl("\u25CF " + (campus.skillswap.service.Presence.isOnline(o) ? "Online" : "Offline"), Font.PLAIN, 16, campus.skillswap.service.Presence.isOnline(o) ? GREEN : MUTED)); GridBagConstraints g = new GridBagConstraints(); g.anchor = GridBagConstraints.WEST; g.weightx = 1; hi.add(hv, g);
+            JPanel hb = new JPanel(new GridBagLayout()); hb.setOpaque(false); JPanel hbr = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0)); hbr.setOpaque(false);
+            hbr.add(ghost("\u2691", () -> report(o.username)));
+            hbr.add(ghost("Voice call", () -> campus.skillswap.service.Calls.start(o.username, false)));
+            { JButton vc = btn("Video call", () -> campus.skillswap.service.Calls.start(o.username, true)); vc.setBackground(GREEN); vc.setForeground(ONACC); vc.setFont(f(Font.BOLD, 16)); vc.setBorder(new EmptyBorder(10, 18, 10, 18)); hbr.add(vc); }
+            if (!o.teach.isEmpty()) { JButton bk = btn("Book Session", () -> book(o.username, me.username, o.teach.get(0))); bk.setFont(f(Font.BOLD, 16)); bk.setBorder(new EmptyBorder(10, 18, 10, 18)); hbr.add(bk); }
+            hb.add(hbr); h.add(hav, BorderLayout.WEST); h.add(hi); h.add(hb, BorderLayout.EAST); right.add(h, BorderLayout.NORTH);
+>>>>>>> cd174e93bc0dd11c036ff03ca00f4353bfa1d2bc
 
             JPanel msgs = vbox(); msgs.setBorder(new EmptyBorder(16, 30, 16, 30));
             List<Msg> conv = S.msgs.stream().filter(m -> grp ? m.to.equals(target) : ((m.from.equals(me.username) && m.to.equals(o.username)) || (m.from.equals(o.username) && m.to.equals(me.username)))).filter(m -> !m.hiddenFor(me.username)).collect(Collectors.toList());
