@@ -90,7 +90,7 @@ public class AppShell {
             case "Nearby": c = nearbyPage(); break; case "Messages": c = messagesPage(); break; case "Moderation": c = moderationPage(); break; case "Profile": c = profilePage(); break;
             case "Settings": c = settingsPage(); break; default: c = feedPage();
         }
-        content.add(c); content.revalidate(); content.repaint(); buildSidebar();
+        content.add(c); content.revalidate(); content.repaint(); markNavSeen(pgName); buildSidebar();
         boolean side = !(pgName.equals("Messages") || pgName.equals("Settings") || pgName.equals("Moderation"));   // these use the full width
         rightScroll.setVisible(side); if (side) buildRight(); rightScroll.getParent().revalidate();
         if (me.moderator) statusBar.setText(netText() + "   |   Moderator: " + name(me) + "   |   Open reports: " + S.reports.stream().filter(r -> !r.resolved).count() + "   |   Last online sync: " + S.lastSync);
@@ -119,7 +119,22 @@ public class AppShell {
             }
         };
     }
-    /** Small circular counter used on sidebar items (earned certificates, unread messages). */
+    /** Counts for the left navigation; the badge disappears when that page is opened. */
+    static long earnedCerts() { return me == null ? 0 : badges(me).stream().filter(b -> b[2].equals("Earned")).count(); }
+    static long pendingRequests() { return me == null ? 0 : S.sessions.stream().filter(s -> s.status.equals("PENDING") && !s.requester.equals(me.username) && involves(s, me)).count(); }
+    static String seenKey(String what) { return "nav.seen." + what + "." + (me == null ? "" : me.username); }
+    static long seen(String what) { try { return Long.parseLong(c(seenKey(what), "0")); } catch (NumberFormatException e) { return 0; } }
+    static long unseen(String what, long current) { return Math.max(0, current - seen(what)); }
+    static void markSeen(String what, long current) {
+        if (me == null) return;
+        String k = seenKey(what), v = Long.toString(current);
+        if (!v.equals(c(k, ""))) { cfg.setProperty(k, v); saveCfg(); }
+    }
+    static void markNavSeen(String pg) {
+        if (pg.equals("Certs")) markSeen("certs", earnedCerts());
+        else if (pg.equals("Bookings")) markSeen("bookings", pendingRequests());
+    }
+    /** Small circular counter used on sidebar items (unseen certificates, pending requests, unread messages). */
     static void addSidebarCount(RBtn b, long n) {
         if (n <= 0) return;
         String t = n > 99 ? "99+" : Long.toString(n);
@@ -145,8 +160,12 @@ public class AppShell {
             b.setBackground(on ? YEL : PANEL); b.setBorder(new EmptyBorder(8, 12, 8, 12));
             b.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42)); b.setCursor(new Cursor(Cursor.HAND_CURSOR));
             if (n[0].equals("Certs")) {
-                long earned = badges(me).stream().filter(x -> x[2].equals("Earned")).count();
-                addSidebarCount(b, earned);
+                long unseen = unseen("certs", earnedCerts());
+                if (unseen > 0) { addSidebarCount(b, unseen); b.setToolTipText(unseen + " new certificate" + (unseen == 1 ? "" : "s")); }
+            }
+            if (n[0].equals("Bookings")) {
+                long unseen = unseen("bookings", pendingRequests());
+                if (unseen > 0) { addSidebarCount(b, unseen); b.setToolTipText(unseen + " new swap request" + (unseen == 1 ? "" : "s")); }
             }
             if (n[0].equals("Messages")) {
                 long unread = unreadCount();

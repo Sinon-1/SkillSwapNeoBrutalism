@@ -64,7 +64,8 @@ public class Main {
             frame.setSize(w, h); frame.setMinimumSize(new Dimension(Math.min(900, screen.width), Math.min(600, screen.height)));
             frame.setLocation(screen.x + Math.max(0, (screen.width - w) / 2), screen.y + Math.max(0, (screen.height - h) / 2));
             if (w < 1280 || h < 780) frame.setExtendedState(JFrame.MAXIMIZED_BOTH);   // small screen: fill it so the right rail is never cut off
-            if (!connectLoop("")) System.exit(0);
+            String autoErr = autoConnect();
+            if (autoErr != null && !connectLoop(autoErr)) System.exit(0);
             try { initData(); } catch (Exception ex) { info("Could not load data from PostgreSQL:\n" + ex.getMessage()); System.exit(1); }
             root = new JPanel(rootCards); root.add(loginPanel(), "login"); root.add(appPanel(), "app");
             frame.setContentPane(root); frame.setVisible(true); rootCards.show(root, "login");

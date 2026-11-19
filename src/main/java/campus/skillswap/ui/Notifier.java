@@ -53,6 +53,26 @@ import static campus.skillswap.ui.media.Reels.*;
 public class Notifier {
 
     public static void notifyUser(String title, String msg) {
+        notify(title, msg, campus.skillswap.ui.media.Sound.Kind.GENERAL);
+    }
+
+    /** One call alert (for a missed call), using the sound chosen for calls. */
+    public static void notifyCall(String title, String msg) {
+        notify(title, msg, campus.skillswap.ui.media.Sound.Kind.CALL);
+    }
+
+    /** Tray/toast alert for an incoming call; the chosen call sound loops until the call is answered or dismissed. */
+    public static void notifyIncomingCall(String title, String msg) {
+        alert(title, msg);
+        campus.skillswap.ui.media.Sound.startCallLoop();
+    }
+
+    static void notify(String title, String msg, campus.skillswap.ui.media.Sound.Kind kind) {
+        campus.skillswap.ui.media.Sound.playNotification(kind);
+        alert(title, msg);
+    }
+
+    static void alert(String title, String msg) {
         try {
             if (SystemTray.isSupported()) {
                 if (tray == null) { BufferedImage im = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB); Graphics2D g = im.createGraphics();

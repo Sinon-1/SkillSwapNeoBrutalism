@@ -1,6 +1,5 @@
 package campus.skillswap.service;
 
-import java.awt.Toolkit;
 import java.awt.image.BufferedImage;
 import java.io.*;
 import java.net.*;
@@ -33,7 +32,7 @@ public class Calls {
     static boolean outgoing, video, camOn, muted;
     static long startedAt;
     static ServerSocket ss; static CallLink link; static CallWindow win; static Camera cam; static ScreenCapture screen; static Audio audio;
-    static javax.swing.Timer ringTimer, tickTimer, beepTimer;
+    static javax.swing.Timer ringTimer, tickTimer;
 
     public static boolean inCall() { return state != 0 || GroupCalls.active(); }
 
@@ -75,8 +74,7 @@ public class Calls {
     static void incoming(CallSig s) {
         state = 2; callId = s.callId; peer = s.from; remoteHost = s.host; remotePort = s.port; video = s.video; camOn = s.video; muted = false; outgoing = false; final String id = s.callId;
         win = new CallWindow(peer, name(peer), s.video, ACTIONS); win.setMode(Mode.INCOMING, s.video ? "Incoming video call" : "Incoming voice call"); win.open();
-        notifyUser("Incoming " + (s.video ? "video" : "voice") + " call", name(peer) + " is calling you");
-        beepTimer = new javax.swing.Timer(2000, e -> Toolkit.getDefaultToolkit().beep()); beepTimer.setInitialDelay(0); beepTimer.start();
+        notifyIncomingCall("Incoming " + (s.video ? "video" : "voice") + " call", name(peer) + " is calling you");
         ringTimer = new javax.swing.Timer(RING_MS, e -> { if (state == 2 && id.equals(callId)) endSession("Missed call", null); });
         ringTimer.setRepeats(false); ringTimer.start();
     }
@@ -180,7 +178,7 @@ public class Calls {
     }
     static void stopTimers() {
         if (ringTimer != null) { ringTimer.stop(); ringTimer = null; }
-        if (beepTimer != null) { beepTimer.stop(); beepTimer = null; }
+        Sound.stop();
         if (tickTimer != null) { tickTimer.stop(); tickTimer = null; }
     }
     static void closeServer() { if (ss != null) { try { ss.close(); } catch (IOException e) { } ss = null; } }
@@ -202,7 +200,7 @@ public class Calls {
         boolean mine = s.callId != null && s.callId.equals(callId);
         switch (s.kind) {
             case "INVITE": if (state != 0 || GroupCalls.active()) sendSig("BUSY", s.from, s.callId, "", 0, s.video); else incoming(s); break;
-            case "CANCEL": if (state == 2 && mine) { endSession("Missed call", null); notifyUser("Missed call", name(s.from) + " tried to call you"); } break;
+            case "CANCEL": if (state == 2 && mine) { endSession("Missed call", null); notifyCall("Missed call", name(s.from) + " tried to call you"); } break;
             case "DECLINE": if (state == 1 && mine) endSession(name(peer) + " declined the call", cap(kind()) + " declined"); break;
             case "BUSY": if (state == 1 && mine) endSession(name(peer) + " is on another call", "Missed " + kind()); break;
             case "END": if (state == 3 && mine) endActive("Call ended"); break;

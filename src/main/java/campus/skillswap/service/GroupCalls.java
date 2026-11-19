@@ -1,6 +1,5 @@
 package campus.skillswap.service;
 
-import java.awt.Toolkit;
 import java.awt.image.BufferedImage;
 import java.io.*;
 import java.net.*;
@@ -57,7 +56,7 @@ public class GroupCalls {
     static final Map<Integer, Map<String, Long>> live = new HashMap<>();
     static javax.swing.Timer liveTimer; static String shownSig = "";
     // incoming ring
-    static GroupCallWindow ringWin; static Group ringGroup; static javax.swing.Timer ringTimer, beepTimer;
+    static GroupCallWindow ringWin; static Group ringGroup; static javax.swing.Timer ringTimer;
 
     public static boolean active() { return active; }
     public static int activeGroupId() { return active && group != null ? group.id : -1; }
@@ -357,15 +356,14 @@ public class GroupCalls {
     static void incoming(Group g, String from) {
         ringGroup = g;
         ringWin = new GroupCallWindow(g, me.username, RING_ACTIONS); ringWin.setCaller(name(from)); ringWin.setMode(Mode.RINGING, g.members.size() + " members"); ringWin.open();
-        notifyUser("Group video call", name(from) + " started a call in " + g.name);
-        beepTimer = new javax.swing.Timer(2000, e -> Toolkit.getDefaultToolkit().beep()); beepTimer.setInitialDelay(0); beepTimer.start();
+        notifyIncomingCall("Group video call", name(from) + " started a call in " + g.name);
         final GroupCallWindow mineWin = ringWin;
         ringTimer = new javax.swing.Timer(RING_MS, e -> { if (ringWin == mineWin) closeRing("Missed group call"); }); ringTimer.setRepeats(false); ringTimer.start();
     }
     /** Closes the ringing window; with a message it stays visible for a moment, with null it just disappears. */
     static void closeRing(String msg) {
         if (ringTimer != null) { ringTimer.stop(); ringTimer = null; }
-        if (beepTimer != null) { beepTimer.stop(); beepTimer = null; }
+        Sound.stop();
         GroupCallWindow w = ringWin; ringWin = null; ringGroup = null;
         if (w != null) { if (msg != null) w.ended(msg); else w.dispose(); }
     }

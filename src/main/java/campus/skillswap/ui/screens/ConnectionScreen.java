@@ -57,6 +57,36 @@ public class ConnectionScreen {
         cfg.setProperty("conn.mode", "pg"); saveCfg();
         return connectPostgres(err);
     }
+    /**
+     * Tries the connection saved in ~/.skillswap/config.properties without showing a dialog.
+     * Returns null when it worked, or a message for the connection dialog when it did not.
+     */
+    public static String autoConnect() {
+        String host = c("db.host", "").trim();
+        if (host.isEmpty()) return "";
+        String port = c("db.port", "5432").trim();
+        String name = c("db.name", "postgres").trim().toLowerCase();
+        String user = c("db.user", "postgres").trim();
+        String pass = c("db.password", System.getenv().getOrDefault("SKILLSWAP_DB_PASSWORD", ""));
+        if (pass.isEmpty()) return "No database password is saved. Enter it once and tick \"Remember password on this computer\".";
+        Connection a = null, b = null;
+        try {
+            Class.forName("org.postgresql.Driver");
+            DriverManager.setLoginTimeout(10);
+            a = open(host, port, name, user, pass);
+            schema(a);
+            b = open(host, port, name, user, pass);
+            b.setAutoCommit(false);
+            b.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+            closeDb();
+            db = a; dbRead = b; xfer = new String[]{host, port, name, user, pass};
+            cfg.setProperty("conn.mode", "pg"); saveCfg();
+            return null;
+        } catch (Exception ex) {
+            try { if (a != null) a.close(); if (b != null) b.close(); } catch (Exception ignored) { }
+            return "Could not connect to the saved database: " + ex.getMessage();
+        }
+    }
     static boolean connectHost() {
         JTextField po = field(); po.setText(c("lan.port", String.valueOf(LanSync.DEFAULT_PORT)));
         if (!ask("Host on this network", form(new String[]{"Port"}, new JComponent[]{po}))) return false;
