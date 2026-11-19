@@ -18,6 +18,7 @@ import campus.skillswap.config.AppConfig;
  */
 public class Camera {
     static final String[] OUT = {"-an", "-vf", "fps=12,scale=480:-2", "-pix_fmt", "yuvj420p", "-q:v", "7", "-f", "image2pipe", "-c:v", "mjpeg", "-"};
+    static final long FIRST_FRAME_TIMEOUT_MS = 25000;     // some cameras (e.g. Canon EOS Webcam Utility) take ~7 s to send the first frame
     volatile boolean run; volatile Process pr;
 
     public static Path logFile() { return AppConfig.DIR.resolve("camera.log"); }
@@ -47,7 +48,10 @@ public class Camera {
                 p = new ProcessBuilder(cmd).start(); pr = p; final Process fp = p;
                 Thread drain = new Thread(() -> { try (BufferedReader r = new BufferedReader(new InputStreamReader(fp.getErrorStream()))) { String l; while ((l = r.readLine()) != null) if (errs.size() < 40) errs.add(l); } catch (IOException e) { } });
                 drain.setDaemon(true); drain.start();
-                Thread dog = new Thread(() -> { try { Thread.sleep(7000); } catch (InterruptedException e) { return; } if (!got.get()) fp.destroyForcibly(); });   // opened but never delivered a frame
+                Thread dog = new Thread(() -> {
+                    try { Thread.sleep(FIRST_FRAME_TIMEOUT_MS); } catch (InterruptedException e) { return; }
+                    if (!got.get()) { synchronized (log) { log.append("  no frame after ").append(FIRST_FRAME_TIMEOUT_MS / 1000).append("s, trying the next setting\n"); } fp.destroyForcibly(); }
+                });   // opened but never delivered a frame
                 dog.setDaemon(true); dog.start();
                 parse(p.getInputStream(), f -> { if (got.compareAndSet(false, true)) log.append("  first frame received\n"); onJpeg.accept(f); }, () -> run);
             } catch (IOException e) { errs.add(String.valueOf(e.getMessage())); }

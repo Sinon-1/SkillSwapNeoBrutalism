@@ -83,7 +83,7 @@ public class Videos {
             try {
                 LanSync.putVideo(postId, f);
                 SwingUtilities.invokeLater(() -> { Post cur = postById(postId); if (cur != null) { cur.videoName = f.getName(); cur.videoSize = len; save(); }
-                    toast("Your video is live!"); if (me != null && page.equals("Feed") && inlineFx == null) show("Feed"); });
+                    toast("Your video is live!"); if (me != null && page.equals("Feed") && !videoOpen()) show("Feed"); });
             } catch (Exception e) { SwingUtilities.invokeLater(() -> toast("Video upload failed: " + nz(e.getMessage()).split("\n")[0])); }
         }, "video-upload").start();
     }
@@ -95,7 +95,7 @@ public class Videos {
                 p.setInt(1, postId); p.setString(2, f.getName()); p.setLong(3, len); p.setBinaryStream(4, in, (int) len); p.executeUpdate();
                 SwingUtilities.invokeLater(() -> { Post cur = postById(postId);
                     if (cur != null) { cur.videoName = f.getName(); cur.videoSize = len; ver++; snap.put("p:" + postId, pfp(cur)); }
-                    toast("Your video is live!"); if (me != null && page.equals("Feed") && inlineFx == null) show("Feed"); });
+                    toast("Your video is live!"); if (me != null && page.equals("Feed") && !videoOpen()) show("Feed"); });
             } catch (Exception e) { SwingUtilities.invokeLater(() -> toast("Video upload failed: " + nz(e.getMessage()).split("\n")[0])); }
         }, "video-upload").start();
     }
@@ -170,7 +170,7 @@ public class Videos {
     }
     static final Map<Integer, Object> DL_LOCKS = new ConcurrentHashMap<>();
     /** True while a video player is on screen (inline or full-screen reels): incoming LAN/DB changes must not rebuild the UI then. */
-    public static boolean videoOpen() { return inlineFx != null || Reels.reelDlg != null; }
+    public static boolean videoOpen() { return inlineLoading || inlineFx != null || Reels.reelDlg != null; }
     static void withVideoLan(Post po, Consumer<File> ok, Consumer<String> fail) {
         final int id = po.id; final long size = po.videoSize;
         final Path dir = DIR.resolve("cache"), file = dir.resolve("video_" + id + "_" + po.videoName.replaceAll("[^A-Za-z0-9._-]", "_"));
@@ -196,16 +196,27 @@ public class Videos {
         final Path dir = DIR.resolve("cache"), file = dir.resolve("video_" + id + "_" + po.videoName.replaceAll("[^A-Za-z0-9._-]", "_"));
         try { if (Files.exists(file) && Files.size(file) == size) { ok.accept(file.toFile()); return; } } catch (IOException e) { /* download again */ }
         new Thread(() -> {
-            try (Connection cn = openXfer(); PreparedStatement p = cn.prepareStatement("SELECT data FROM post_videos WHERE post_id=?")) {
-                p.setInt(1, id);
-                try (ResultSet r = p.executeQuery()) {
-                    if (!r.next()) throw new IOException("Video not found on the server");
-                    Files.createDirectories(dir); Path tmp = dir.resolve(file.getFileName() + ".part");
-                    try (InputStream in = r.getBinaryStream(1)) { Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING); }
-                    Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
-                }
-                SwingUtilities.invokeLater(() -> ok.accept(file.toFile()));
-            } catch (Exception e) { SwingUtilities.invokeLater(() -> fail.accept(nz(e.getMessage()).split("\n")[0])); }
+            synchronized (DL_LOCKS.computeIfAbsent(id, k -> new Object())) {       // one download per video: thumbnail + play used to overwrite the same file
+                try {
+                    Files.createDirectories(dir);
+                    if (!(Files.exists(file) && Files.size(file) == size)) {
+                        Path tmp = dir.resolve(file.getFileName() + "." + System.nanoTime() + ".part");
+                        try {
+                            try (Connection cn = openXfer(); PreparedStatement p = cn.prepareStatement("SELECT data FROM post_videos WHERE post_id=?")) {
+                                p.setInt(1, id);
+                                try (ResultSet r = p.executeQuery()) {
+                                    if (!r.next()) throw new IOException("Video not found on the server");
+                                    try (InputStream in = r.getBinaryStream(1)) { Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING); }
+                                }
+                            }
+                            long got = Files.size(tmp);
+                            if (size > 0 && got != size) throw new IOException("Video download was incomplete (" + mb(got) + " of " + mb(size) + "). Try again.");
+                            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+                        } finally { try { Files.deleteIfExists(tmp); } catch (IOException e) { } }
+                    }
+                    SwingUtilities.invokeLater(() -> ok.accept(file.toFile()));
+                } catch (Exception e) { SwingUtilities.invokeLater(() -> fail.accept(nz(e.getMessage()).split("\n")[0])); }
+            }
         }, "video-download").start();
     }
     /** In-app player: only available when VideoPlayerFX.class (and JavaFX) are present; otherwise null and the app shows a message. */
@@ -425,14 +436,14 @@ public class Videos {
     }
 
     // ---- inline player: the video plays inside the post card itself ----
-    public static JComponent inlineFx; public static int inlineTok; public static Runnable inlineRestore;
+    public static JComponent inlineFx; public static int inlineTok; public static Runnable inlineRestore; public static boolean inlineLoading;
     public static void stopInline() {
-        inlineTok++; if (inlineFx != null) { fxStop(inlineFx); inlineFx = null; }
+        inlineTok++; inlineLoading = false; if (inlineFx != null) { fxStop(inlineFx); inlineFx = null; }
         if (inlineRestore != null) { Runnable r = inlineRestore; inlineRestore = null; r.run(); }
     }
     /** Playback failed: stay in the app, say why, and let the person choose to open their own video player. */
     static void failInline(JPanel holder, File file, String why, Runnable restore) {
-        if (inlineFx != null) { fxStop(inlineFx); inlineFx = null; }
+        inlineLoading = false; if (inlineFx != null) { fxStop(inlineFx); inlineFx = null; }
         inlineRestore = restore;
         String first = nz(why).split("\n")[0]; if (first.length() > 160) first = first.substring(0, 160) + "...";
         JPanel box = vbox(); put(box, lbl("This video can't be played inside the app.", Font.BOLD, 13, TXT));
@@ -446,18 +457,19 @@ public class Videos {
     }
     public static void playInline(int id, JPanel holder) {
         Post po = postById(id); if (po == null) return;
-        stopInline(); final int tok = ++inlineTok;
+        stopInline(); final int tok = ++inlineTok; inlineLoading = true;
         Runnable restore = () -> { holder.removeAll(); holder.add(videoTile(po, 260, 146, false, () -> playInline(id, holder)), BorderLayout.WEST); holder.revalidate(); holder.repaint(); };
         inlineRestore = restore;
         holder.removeAll(); holder.add(lbl("Loading video...", Font.PLAIN, 12, MUTED), BorderLayout.WEST); holder.revalidate(); holder.repaint();
         withVideo(po, file -> {
             if (tok != inlineTok) return;
-            JComponent fx = fxPlayer(file, 480, 360, msg -> { if (tok == inlineTok) failInline(holder, file, msg, restore); });
+            int avail = holder.getWidth(); int vw = avail >= 320 ? Math.min(480, avail) : 400, vh = Math.round(vw * 9f / 16f);   // fit the post card instead of overflowing it
+            JComponent fx = fxPlayer(file, vw, vh, msg -> { if (tok == inlineTok) failInline(holder, file, msg, restore); });
             if (fx == null) { failInline(holder, file, "The in-app player (JavaFX) is not available. Start the app with scripts\\run-dev.bat.", restore); return; }
-            inlineFx = fx; JPanel box = new JPanel(new BorderLayout(0, 4)); box.setOpaque(false); box.add(fx);
+            inlineLoading = false; inlineFx = fx; JPanel box = new JPanel(new BorderLayout(0, 4)); box.setOpaque(false); box.add(fx);
             JPanel bar = row(); bar.add(ghost("\u2715 Close video", Videos::stopInline)); bar.add(lbl("Click to pause  \u2022  double-click sides to skip 10s", Font.PLAIN, 11, MUTED)); box.add(bar, BorderLayout.SOUTH);
             holder.removeAll(); holder.add(box, BorderLayout.WEST); holder.revalidate(); holder.repaint();
-        }, err -> { if (tok != inlineTok) return; inlineRestore = null; restore.run(); toast("Could not load video: " + err); });
+        }, err -> { if (tok != inlineTok) return; inlineLoading = false; inlineRestore = null; restore.run(); toast("Could not load video: " + err); });
     }
 
     public static JComponent videoTile(Post po, int w, int h, boolean meta, Runnable onClick) {

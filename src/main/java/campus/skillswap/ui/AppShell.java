@@ -44,6 +44,7 @@ import static campus.skillswap.ui.screens.SearchScreen.*;
 import static campus.skillswap.ui.screens.CertsScreen.*;
 import static campus.skillswap.ui.screens.BookingsScreen.*;
 import static campus.skillswap.ui.screens.NearbyScreen.*;
+import static campus.skillswap.ui.screens.ModerationScreen.*;
 import static campus.skillswap.ui.screens.MessagesScreen.*;
 import static campus.skillswap.ui.screens.ProfileScreen.*;
 import static campus.skillswap.ui.media.Videos.*;
@@ -59,7 +60,7 @@ public class AppShell {
     public static final DateTimeFormatter DF = DateTimeFormatter.ofPattern("EEE, MMM d \u2022 h:mm a");
     // ====================== MAIN APP SHELL ======================
     public static final String[][] NAV = {{"Feed", "Skill Feed"}, {"Search", "Search Topics"}, {"Certs", "Verified Certificates"}, {"Bookings", "Bookings & Sessions"},
-            {"Nearby", "Nearby Now"}, {"Messages", "Messages"}, {"Profile", "My Profile & Rating"}, {"Settings", "Settings"}};
+            {"Nearby", "Nearby Now"}, {"Messages", "Messages"}, {"Moderation", "Reports & Moderation"}, {"Profile", "My Profile & Rating"}, {"Settings", "Settings"}};
     public static JComponent appPanel() {
         JPanel p = new JPanel(new BorderLayout()); p.setBackground(BG);
         sidebar = new JPanel(); sidebar.setLayout(new BoxLayout(sidebar, BoxLayout.Y_AXIS)); sidebar.setBackground(PANEL); sidebar.setPreferredSize(new Dimension(224, 0));
@@ -73,17 +74,32 @@ public class AppShell {
         p.add(sidebar, BorderLayout.WEST); p.add(content, BorderLayout.CENTER); p.add(rightScroll, BorderLayout.EAST); p.add(sb, BorderLayout.SOUTH); return p;
     }
     public static void show(String pgName) {
+        if (me != null && me.moderator) pgName = "Moderation";
         stopInline(); page = pgName; content.removeAll();
         JComponent c;
         switch (pgName) {
             case "Search": c = searchPage(); break; case "Certs": c = certsPage(); break; case "Bookings": c = bookingsPage(); break;
-            case "Nearby": c = nearbyPage(); break; case "Messages": c = messagesPage(); break; case "Profile": c = profilePage(); break;
+            case "Nearby": c = nearbyPage(); break; case "Messages": c = messagesPage(); break; case "Moderation": c = moderationPage(); break; case "Profile": c = profilePage(); break;
             case "Settings": c = settingsPage(); break; default: c = feedPage();
         }
         content.add(c); content.revalidate(); content.repaint(); buildSidebar();
-        boolean side = !(pgName.equals("Messages") || pgName.equals("Settings"));   // chat & settings use the full width
+        boolean side = !(pgName.equals("Messages") || pgName.equals("Settings") || pgName.equals("Moderation"));   // these use the full width
         rightScroll.setVisible(side); if (side) buildRight(); rightScroll.getParent().revalidate();
-        statusBar.setText(netText() + "   |   Signed in as " + name(me) + "   |   Credits: " + me.credits + "/" + MAX_CREDITS + "   |   Last online sync: " + S.lastSync);
+        if (me.moderator) statusBar.setText(netText() + "   |   Moderator: " + name(me) + "   |   Open reports: " + S.reports.stream().filter(r -> !r.resolved).count() + "   |   Last online sync: " + S.lastSync);
+        else statusBar.setText(netText() + "   |   Signed in as " + name(me) + "   |   Credits: " + me.credits + "/" + MAX_CREDITS + "   |   Last online sync: " + S.lastSync);
+    }
+    static void logout() {
+        stopInline(); closeReels(); campus.skillswap.service.Calls.shutdown(); campus.skillswap.service.Presence.goOffline(); save(); me = null; rootCards.show(root, "login");
+    }
+    /** Called after a refresh: a banned account is signed out immediately. */
+    public static boolean sessionValid() {
+        if (me == null) return false;
+        if (!me.banned) return true;
+        String why = me.banReason == null ? "" : me.banReason;
+        campus.skillswap.service.Presence.goOffline(); campus.skillswap.service.Calls.shutdown(); closeReels(); stopInline();
+        me = null; rootCards.show(root, "login");
+        info("Your account has been banned by a campus moderator." + (why.isEmpty() ? "" : "\n\nReason: " + why));
+        return false;
     }
     /** Logo mark: yellow square, ink border, hard shadow, bold "S". */
     static JComponent logoMark(int sz) {
@@ -96,11 +112,13 @@ public class AppShell {
         };
     }
     public static void buildSidebar() {
+        if (me != null && me.moderator) { buildModeratorSidebar(); return; }
         sidebar.removeAll(); sidebar.setBorder(new CompoundBorder(new MatteBorder(0, 0, 0, CB, INK), new EmptyBorder(16, 12, 14, 12)));
         JPanel logo = new JPanel(new BorderLayout(10, 0)); logo.setOpaque(false); JPanel lw = new JPanel(new GridBagLayout()); lw.setOpaque(false); lw.add(logoMark(38));
         JPanel tx = vbox(); put(tx, lbl("Skillswap", Font.BOLD, 20, TXT)); put(tx, lbl("PEER LEARNING", Font.BOLD, 10, MUTED));
         logo.add(lw, BorderLayout.WEST); logo.add(tx); logo.setBorder(new EmptyBorder(0, 2, 18, 0)); logo.setMaximumSize(new Dimension(Integer.MAX_VALUE, 64)); put(sidebar, logo);
         for (String[] n : NAV) {
+            if (n[0].equals("Moderation") && (me == null || !me.moderator)) continue;
             boolean on = n[0].equals(page);
             RBtn b = new RBtn(n[1], 0); b.flat(!on); b.setHorizontalAlignment(SwingConstants.LEFT); b.setFont(f(Font.BOLD, 13)); b.setForeground(on ? ONACC : TXT);
             b.setBackground(on ? YEL : PANEL); b.setBorder(new EmptyBorder(8, 12, 8, 12));
@@ -114,10 +132,32 @@ public class AppShell {
                     JPanel w = new JPanel(new GridBagLayout()); w.setOpaque(false); w.add(bd); b.setLayout(new BorderLayout()); b.add(w, BorderLayout.EAST);
                 }
             }
+            if (n[0].equals("Moderation")) {
+                long open = S.reports.stream().filter(r -> !r.resolved).count();
+                if (open > 0) b.setText(n[1] + "  (" + open + ")");
+            }
             String t = n[0]; b.addActionListener(e -> show(t)); put(sidebar, b); gap(sidebar, 6);
         }
         sidebar.add(Box.createVerticalGlue());
-        JButton out = ghost("Log Out", () -> { stopInline(); closeReels(); campus.skillswap.service.Calls.shutdown(); campus.skillswap.service.Presence.goOffline(); save(); me = null; rootCards.show(root, "login"); }); out.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42)); put(sidebar, out);
+        JButton out = ghost("Log Out", AppShell::logout); out.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42)); put(sidebar, out);
+        sidebar.revalidate(); sidebar.repaint();
+    }
+    static void buildModeratorSidebar() {
+        sidebar.removeAll(); sidebar.setBorder(new CompoundBorder(new MatteBorder(0, 0, 0, CB, INK), new EmptyBorder(16, 12, 14, 12)));
+        JPanel logo = new JPanel(new BorderLayout(10, 0)); logo.setOpaque(false); JPanel lw = new JPanel(new GridBagLayout()); lw.setOpaque(false); lw.add(logoMark(38));
+        JPanel tx = vbox(); put(tx, lbl("Skillswap", Font.BOLD, 20, TXT)); put(tx, lbl("MODERATOR CONSOLE", Font.BOLD, 10, MUTED));
+        logo.add(lw, BorderLayout.WEST); logo.add(tx); logo.setBorder(new EmptyBorder(0, 2, 18, 0)); logo.setMaximumSize(new Dimension(Integer.MAX_VALUE, 64)); put(sidebar, logo);
+        long open = S.reports.stream().filter(r -> !r.resolved).count(), banned = S.users.values().stream().filter(u -> u.banned).count();
+        JPanel stats = card(); stats.setBorder(new EmptyBorder(8, 12, 8, 12)); JPanel si = vbox();
+        put(si, lbl("REPORT QUEUE", Font.BOLD, 10, MUTED)); put(si, lbl(open + " open", Font.BOLD, 18, TXT));
+        gap(si, 4); put(si, lbl(banned + " banned account" + (banned == 1 ? "" : "s"), Font.PLAIN, 11, MUTED));
+        stats.add(si); stats.setMaximumSize(new Dimension(Integer.MAX_VALUE, stats.getPreferredSize().height)); put(sidebar, stats); gap(sidebar, 14);
+        RBtn b = new RBtn("Reports & Moderation", 0); b.setHorizontalAlignment(SwingConstants.LEFT); b.setFont(f(Font.BOLD, 13)); b.setForeground(ONACC);
+        b.setBackground(YEL); b.setBorder(new EmptyBorder(8, 12, 8, 12)); b.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42)); b.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        if (open > 0) b.setText("Reports & Moderation  (" + open + ")");
+        b.addActionListener(e -> show("Moderation")); put(sidebar, b);
+        sidebar.add(Box.createVerticalGlue());
+        JButton out = ghost("Log Out", AppShell::logout); out.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42)); put(sidebar, out);
         sidebar.revalidate(); sidebar.repaint();
     }
     public static void buildRight() {
@@ -127,7 +167,7 @@ public class AppShell {
         JPanel chips = row();
         for (String bd : new String[]{"Most Active", "Most Learned"}) chips.add(chip(bd, bd.equals(board), () -> { board = bd; buildRight(); }));
         put(rightPanel, chips);
-        List<User> us = new ArrayList<>(S.users.values());
+        List<User> us = S.users.values().stream().filter(u -> !u.banned).collect(Collectors.toCollection(ArrayList::new));
         us.sort((x, y) -> board.equals("Most Active") ? Long.compare(taught(y), taught(x)) : Long.compare(learnedN(y), learnedN(x)));
         int rank = 1;
         for (User u : us.subList(0, Math.min(5, us.size()))) {

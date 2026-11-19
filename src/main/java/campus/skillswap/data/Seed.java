@@ -66,6 +66,17 @@ public class Seed {
         Post p = new Post(); p.id = nextId(); p.author = a; p.type = type; p.skill = skill; p.category = cat(skill);
         p.desc = desc; p.time = System.currentTimeMillis() - (long) (Math.random() * 6e6); for (int i = 0; i < (int) (Math.random() * 7); i++) p.likes.add("seed" + i); S.posts.add(p);
     }
+    /** Adds a known campus moderator account on old databases that do not have one yet. */
+    public static boolean ensureModerator() {
+        User m = S.users.get("campusmod");
+        if (m != null && m.moderator) return false;
+        if (m == null) {
+            m = new User(); m.username = "campusmod"; m.realName = "Campus Moderator"; m.email = "campusmod@school.edu";
+            m.passHash = hash("campusmod", "demo"); m.useRealName = true; m.demo = true; m.moderator = true;
+            m.bio = "Campus moderation account. Reviews reports and keeps SkillSwap safe."; S.users.put(m.username, m);
+        } else { m.moderator = true; m.banned = false; m.banReason = ""; m.bannedBy = ""; m.bannedAt = 0; }
+        return true;
+    }
     public static void seed() {
         addUser("ramos", "Dr. Ramos", "demo", new String[]{"Java", "Python", "Calculus"}, new String[]{"Guitar"}, false, "Senior Programmer Major");
         addUser("alamag", "Dr. Alamag", "demo", new String[]{"Guitar", "Piano"}, new String[]{"Python"}, false, "Conservatory Junior");
@@ -75,6 +86,9 @@ public class Seed {
         addUser("dino", "Dr. Dino Ran", "demo", new String[]{"Python", "Guitar"}, new String[]{"Calculus"}, false, "CS Junior");
         addUser("jamesa", "James A.", "demo", new String[]{"Spanish"}, new String[]{"Java"}, false, "");
         addUser("kylet", "Kyle T.", "demo", new String[]{"Drawing"}, new String[]{"Python"}, false, "");
+        addUser("campusmod", "Campus Moderator", "demo", new String[]{}, new String[]{}, false, "Campus moderation account. Reviews reports and keeps SkillSwap safe.").moderator = true;
+        Report rp = new Report(); rp.id = nextId(); rp.by = "kylet"; rp.target = "jamesa"; rp.reason = "No-show";
+        rp.details = "Demo report: missed two scheduled sessions without messaging."; rp.time = System.currentTimeMillis() - 45 * 60 * 1000L; S.reports.add(rp);
         String[] rev = {"Super patient and clear.", "Explained recursion perfectly.", "Great session, very organized.", "Would swap again!"};
         rated("ramos", "jamesa", "Java", 5, rev[0]); rated("ramos", "kylet", "Python", 5, rev[1]);
         rated("ramos", "alamag", "Calculus", 4, rev[2]); rated("ramos", "henry", "Java", 5, rev[3]);

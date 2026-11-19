@@ -63,13 +63,13 @@ public class SearchScreen {
         JPanel chips = row(); for (String c : CATS) chips.add(chip(c, c.equals(searchCat), () -> { searchCat = c; show("Search"); })); put(p.body, chips); gap(p.body, 8);
         if (!searchQ.isEmpty() || !searchCat.equals("All")) {
             put(p.body, lbl("Results", Font.BOLD, 13, MUTED)); gap(p.body, 4); int n = 0;
-            for (User u : S.users.values()) { if (u == me) continue;
+            for (User u : S.users.values()) { if (u == me || u.banned) continue;
                 for (String s : u.teach) if ((searchQ.isEmpty() || s.toLowerCase().contains(searchQ.toLowerCase())) && (searchCat.equals("All") || cat(s).equals(searchCat))) { put(p.body, tutorCard(u, s)); gap(p.body, 6); n++; } }
             if (n == 0) put(p.body, lbl("No tutors found. Try posting a request in the Skill Feed!", Font.PLAIN, 12, MUTED));
             gap(p.body, 10);
         }
         put(p.body, lbl("Trending Topics", Font.BOLD, 13, MUTED)); gap(p.body, 4);
-        Map<String, Integer> cnt = new TreeMap<>(); for (User u : S.users.values()) if (u != me) for (String s : u.teach) cnt.merge(s, 1, Integer::sum);
+        Map<String, Integer> cnt = new TreeMap<>(); for (User u : S.users.values()) if (u != me && !u.banned) for (String s : u.teach) cnt.merge(s, 1, Integer::sum);
         List<Map.Entry<String, Integer>> es = new ArrayList<>(cnt.entrySet()); es.sort((x, y) -> y.getValue() - x.getValue());
         JPanel g = new JPanel(new GridLayout(0, 2, 10, 10)); g.setOpaque(false);
         for (Map.Entry<String, Integer> en : es) {

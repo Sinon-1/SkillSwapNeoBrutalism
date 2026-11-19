@@ -14,4 +14,8 @@ public class User implements java.io.Serializable {
     public byte[] photo;
     /** Epoch millis of the last heartbeat from this user's app (0 = signed out). Not part of the row fingerprint. */
     public long lastSeen;
+    /** Campus moderator: can review reports and ban accounts. */
+    public boolean moderator, banned;
+    public String banReason = "", bannedBy = "";
+    public long bannedAt;
 }

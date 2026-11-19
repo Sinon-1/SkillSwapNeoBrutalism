@@ -56,6 +56,7 @@ public class ProfileScreen {
     public static JComponent profilePage() {
         Pg p = pg("My Profile & Rating", me.email, btn("Edit Profile", ProfileScreen::editProfile));
         JPanel hd = card(); hd.add(avatarWrap(name(me), 72), BorderLayout.WEST); JPanel inf = vbox(); JPanel nm = row(); nm.add(lbl(name(me), Font.BOLD, 18, TXT)); if (verified(me)) nm.add(tag("VERIFIED TUTOR", GREEN));
+        if (me.moderator) nm.add(tag("MODERATOR", GREEN));
         nm.add(tag(me.publicRatings ? "RATINGS PUBLIC" : "RATINGS PRIVATE", MUTED)); put(inf, nm); put(inf, lbl(me.bio.isEmpty() ? "Add your year & course with Edit Profile" : me.bio, Font.PLAIN, 12, MUTED));
         put(inf, lbl(me.useRealName ? "Showing real name (username: " + me.username + ")" : "Showing username" + (me.realName.isEmpty() ? "" : " (real name hidden)"), Font.PLAIN, 11, MUTED)); hd.add(inf); put(p.body, hd); gap(p.body, 8);
         JPanel stats = new JPanel(new GridLayout(1, 3, 8, 0)); stats.setOpaque(false);
@@ -138,7 +139,8 @@ public class ProfileScreen {
         me.realName = rn.getText().trim(); me.bio = bio.getText().trim(); me.useRealName = real.isSelected() && !me.realName.isEmpty(); me.publicRatings = pub.isSelected(); me.photo = photo[0]; save(); show("Profile"); toast("Profile updated");
     }
     public static void profileDialog(User u) {
-        if (u == null) return; StringBuilder sb = new StringBuilder(name(u) + (verified(u) ? "  [VERIFIED]" : "") + "\n" + (u.bio.isEmpty() ? "" : u.bio + "\n") + "\nTeaches: " + String.join(", ", u.teach) + "\nWants to learn: " + String.join(", ", u.learn) + "\nSessions taught: " + taught(u) + "\n");
+        if (u == null) return; StringBuilder sb = new StringBuilder(name(u) + (verified(u) ? "  [VERIFIED]" : "") + (u.moderator ? "  [MODERATOR]" : "") + (u.banned ? "  [BANNED]" : "") + "\n" + (u.bio.isEmpty() ? "" : u.bio + "\n") + "\nTeaches: " + String.join(", ", u.teach) + "\nWants to learn: " + String.join(", ", u.learn) + "\nSessions taught: " + taught(u) + "\n");
+        if (u.banned && u.banReason != null && !u.banReason.isEmpty()) sb.append("Ban reason: ").append(u.banReason).append("\n");
         if (u.publicRatings) { sb.append("Rating: ").append(reviews(u).isEmpty() ? "no reviews yet" : String.format("%.1f", avg(u)) + " (" + reviews(u).size() + " reviews)").append("\n");
             for (Sess s : reviews(u)) sb.append("  ").append(stars(s.rating)).append(" ").append(s.review).append("\n"); } else sb.append("Ratings are private.\n");
         info(sb.toString());

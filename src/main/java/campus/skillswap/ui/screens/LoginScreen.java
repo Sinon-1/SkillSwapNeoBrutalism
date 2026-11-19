@@ -96,6 +96,7 @@ public class LoginScreen {
             String key = u.getText().trim(); String pw = new String(p.getPassword());
             User f = S.users.values().stream().filter(x -> x.username.equalsIgnoreCase(key) || x.email.equalsIgnoreCase(key)).findFirst().orElse(null);
             if (f == null || !f.passHash.equals(hash(f.username, pw))) { JOptionPane.showMessageDialog(frame, "Incorrect username/email or password.", "Sign in failed", JOptionPane.ERROR_MESSAGE); return; }
+            if (f.banned) { JOptionPane.showMessageDialog(frame, "This account has been banned by a campus moderator." + (f.banReason == null || f.banReason.isEmpty() ? "" : "\n\nReason: " + f.banReason), "Account banned", JOptionPane.ERROR_MESSAGE); return; }
             u.setText(""); p.setText(""); enter(f);
         };
         p.addActionListener(e -> go.run()); u.addActionListener(e -> go.run());
@@ -110,7 +111,16 @@ public class LoginScreen {
         bg.add(c); return bg;
     }
     public static void enter(User u) {
-        me = u; if (u.nearby) { u.nearby = false; save(); } campus.skillswap.service.Presence.beat(); page = "Feed"; lastMsgSeen = System.currentTimeMillis(); draft = ""; chatWith = null; rootCards.show(root, "app"); show("Feed"); checkReminders();
+        if (u == null) return;
+        if (u.banned) { JOptionPane.showMessageDialog(frame, "This account has been banned by a campus moderator." + (u.banReason == null || u.banReason.isEmpty() ? "" : "\n\nReason: " + u.banReason), "Account banned", JOptionPane.ERROR_MESSAGE); return; }
+        me = u;
+        if (u.moderator) {
+            page = "Moderation"; lastMsgSeen = System.currentTimeMillis(); draft = ""; chatWith = null;
+            rootCards.show(root, "app"); show("Moderation");
+            notifyUser("Moderator mode", S.reports.stream().filter(r -> !r.resolved).count() + " open report(s) to review.");
+            return;
+        }
+        if (u.nearby) { u.nearby = false; save(); } campus.skillswap.service.Presence.beat(); page = "Feed"; lastMsgSeen = System.currentTimeMillis(); draft = ""; chatWith = null; rootCards.show(root, "app"); show("Feed"); checkReminders();
         notifyUser("Welcome, " + name(u), "You have " + u.credits + " swap credits.");
     }
     /** Small stacked label + input used by the account dialogs. */

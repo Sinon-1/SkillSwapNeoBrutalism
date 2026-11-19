@@ -52,6 +52,14 @@ When booking a session you choose **In person**, **Offline** or **Online**.
 * **Offline** - no live meeting; *Message* opens the chat with the other person.
 * **Online** - tick **Request a video call** to hold the session as an in-app video call. The tutor sees the request (tag "VIDEO CALL") and, once confirmed, either of you can press **Video call** on the booking (or in the chat) to ring the other person.
 
+## Moderation
+
+Sign in with the seeded moderator account **campusmod** (password `demo`) to open the moderator-only **Reports & Moderation** console.
+This account intentionally has no student features (Feed, Search, Bookings, Messages, Profile) - only report review, ban/unban and logout.
+Moderators can dismiss reports, ban an account with a reason, see all banned accounts, and unban them.
+A banned account is signed out on its next refresh and cannot sign in again; all of its open reports are closed when it is banned.
+Existing databases get the `campusmod` account and the extra moderation columns automatically when the app connects.
+
 ## Project layout
 
 ```
@@ -75,17 +83,11 @@ skillswap/
         └── media/                  Videos, Reels, VideoPlayerFX (optional JavaFX player)
 ```
 
-## Two ways to connect
+## Connecting the database
 
-On start the app asks how to connect:
-
-1. **Host on this Wi-Fi / LAN** - no database needed. Best for testing with friends/classmates.
-   One computer chooses *Host*; the app shows its address, port and a 4-digit join code.
-   Everyone else on the same Wi-Fi chooses **Join a host** and enters those three values.
-   Accounts, posts, bookings, chat and reels are shared while the host's app stays open.
-   The host saves its data in `~/.skillswap/lan-data.bin` (videos in `~/.skillswap/lan-videos`), so it is still there next time.
-   If Windows/macOS asks, allow Java through the firewall. If two people edit the same row at the same instant, the last edit wins.
-2. **Shared PostgreSQL database** - for real deployment (see below).
+On start the app opens the database connection screen directly. Enter the host, port, database, user and password
+(for Supabase, copy these from **Project Settings > Database > Connection string**), then create an account or sign in.
+The connection is remembered per computer in `~/.skillswap/config.properties`.
 
 ## Run it (development)
 
@@ -98,9 +100,9 @@ mvn exec:java            # or scripts/run-dev.sh  /  scripts\run-dev.bat
 No Maven? `scripts/build-no-maven.sh` (or `.bat`) compiles with plain `javac` and the jar in `lib/`
 (videos then can not be played, because the in-app player needs JavaFX - use run-dev).
 
-If you pick PostgreSQL, enter host, port, database, user and password. The database and all tables are created
+Enter the host, port, database, user and password. The database and all tables are created
 automatically, and demo data is added if it is empty. Settings are remembered per computer in `~/.skillswap/config.properties`.
-Demo accounts (password `demo`): ramos, alamag, henry, jeb, chinu, dino, jamesa, kylet.
+Demo accounts (password `demo`): ramos, alamag, henry, jeb, chinu, dino, jamesa, kylet, and moderator `campusmod`.
 
 ## Deploy
 

@@ -6,6 +6,7 @@ import javax.swing.border.*;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.*;
+import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
 import java.io.*;
 import java.nio.file.*;
@@ -60,7 +61,7 @@ public class MessagesScreen {
     /** Marks a chat line that is a notice ("Ana created the group", "Group video call ended") rather than typed text. */
     public static final String SYS = "\u0001";
     public static Group groupOf(String key) { if (!Group.isKey(key)) return null; for (Group g : S.groups) if (g.key().equals(key)) return g; return null; }
-    static boolean validChat(String key) { if (key == null) return false; if (Group.isKey(key)) { Group g = groupOf(key); return g != null && g.has(me.username); } return S.users.containsKey(key); }
+    static boolean validChat(String key) { if (key == null) return false; if (Group.isKey(key)) { Group g = groupOf(key); return g != null && g.has(me.username); } User u = S.users.get(key); return u != null && !u.banned; }
 
     /** Notification for a message that just arrived (direct or in one of my groups). Also moves lastMsgSeen forward. */
     public static void notifyNew(Msg m, long cutoff) {
@@ -356,6 +357,54 @@ public class MessagesScreen {
         String key = g.key(); r.addMouseListener(new MouseAdapter() { public void mouseClicked(MouseEvent ev) { chatWith = key; draft = ""; editing = 0; show("Messages"); } });
         return r;
     }
+    /** Square call button whose label is a drawn icon; the tooltip keeps the action name accessible. */
+    static JButton callButton(String tip, Icon icon, boolean primary, Runnable r) {
+        JButton b = primary ? btn("", r) : ghost("", r);
+        b.setIcon(icon); b.setText(""); b.setToolTipText(tip);
+        b.getAccessibleContext().setAccessibleName(tip);
+        b.setBorder(new EmptyBorder(9, 12, 9, 12));
+        if (primary) { b.setBackground(GREEN); b.setForeground(ONACC); }
+        return b;
+    }
+    /** Telephone receiver icon, drawn so it matches the app without depending on emoji fonts. */
+    static Icon phoneIcon(int sz, Color color) {
+        return new Icon() {
+            public int getIconWidth() { return sz; }
+            public int getIconHeight() { return sz; }
+            public void paintIcon(Component c, Graphics g0, int x, int y) {
+                Graphics2D g = (Graphics2D) g0.create(); aa(g);
+                g.translate(x, y); g.scale(sz / 24.0, sz / 24.0); g.setColor(color);
+                Path2D p = new Path2D.Float();
+                p.moveTo(22, 16.92); p.lineTo(22, 19.92); p.quadTo(22, 21.92, 19.82, 21.92);
+                p.quadTo(13.5, 21.5, 11.19, 18.85); p.quadTo(6.0, 16.0, 5.19, 12.85);
+                p.quadTo(2.3, 9.0, 2.12, 4.18); p.quadTo(2.12, 2, 4.11, 2); p.lineTo(7.11, 2);
+                p.quadTo(9.11, 2, 9.11, 3.72); p.quadTo(9.4, 5.3, 9.81, 6.53);
+                p.quadTo(10.2, 7.8, 9.36, 8.64); p.lineTo(8.09, 9.91);
+                p.quadTo(12.0, 13.9, 14.09, 15.91); p.lineTo(15.36, 14.64);
+                p.quadTo(16.4, 13.8, 17.47, 14.19); p.quadTo(18.9, 14.6, 20.28, 14.89);
+                p.quadTo(22, 15.1, 22, 16.92); p.closePath();
+                g.fill(p); g.dispose();
+            }
+        };
+    }
+    /** Video-camera icon: body, lens and side cone. */
+    static Icon videoIcon(int sz, Color color) {
+        return new Icon() {
+            public int getIconWidth() { return sz; }
+            public int getIconHeight() { return sz; }
+            public void paintIcon(Component c, Graphics g0, int x, int y) {
+                Graphics2D g = (Graphics2D) g0.create(); aa(g); double s = sz;
+                g.translate(x, y); g.setColor(color);
+                g.setStroke(new BasicStroke(Math.max(1.8f, sz * 0.085f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                int arc = (int) Math.round(s * 0.12);
+                g.drawRoundRect((int) Math.round(s * 0.10), (int) Math.round(s * 0.31), (int) Math.round(s * 0.52), (int) Math.round(s * 0.38), arc, arc);
+                g.fillOval((int) Math.round(s * 0.27), (int) Math.round(s * 0.43), (int) Math.round(s * 0.15), (int) Math.round(s * 0.15));
+                Path2D lens = new Path2D.Float();
+                lens.moveTo(s * 0.61, s * 0.40); lens.lineTo(s * 0.87, s * 0.30); lens.lineTo(s * 0.87, s * 0.70); lens.lineTo(s * 0.61, s * 0.60); lens.closePath();
+                g.fill(lens); g.dispose();
+            }
+        };
+    }
     /** Header of a one-to-one chat: picture, name, online state and the call / booking buttons. */
     static JPanel dmHeader(User o) {
         JPanel h = new JPanel(new BorderLayout(14, 0)); h.setBackground(BG); h.setBorder(new CompoundBorder(new MatteBorder(0, 0, CB, 0, divider()), new EmptyBorder(14, 26, 14, 26)));
@@ -364,8 +413,8 @@ public class MessagesScreen {
         put(hv, lbl(name(o), Font.BOLD, 20, TXT)); put(hv, lbl("\u25CF " + (campus.skillswap.service.Presence.isOnline(o) ? "Online" : "Offline"), Font.PLAIN, 16, campus.skillswap.service.Presence.isOnline(o) ? GREEN : MUTED)); GridBagConstraints g = new GridBagConstraints(); g.anchor = GridBagConstraints.WEST; g.weightx = 1; hi.add(hv, g);
         JPanel hb = new JPanel(new GridBagLayout()); hb.setOpaque(false); JPanel hbr = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0)); hbr.setOpaque(false);
         hbr.add(ghost("\u2691", () -> report(o.username)));
-        hbr.add(ghost("Voice call", () -> campus.skillswap.service.Calls.start(o.username, false)));
-        { JButton vc = btn("Video call", () -> campus.skillswap.service.Calls.start(o.username, true)); vc.setBackground(GREEN); vc.setForeground(ONACC); vc.setFont(f(Font.BOLD, 16)); vc.setBorder(new EmptyBorder(10, 18, 10, 18)); hbr.add(vc); }
+        hbr.add(callButton("Voice call", phoneIcon(22, TXT), false, () -> campus.skillswap.service.Calls.start(o.username, false)));
+        hbr.add(callButton("Video call", videoIcon(22, ONACC), true, () -> campus.skillswap.service.Calls.start(o.username, true)));
         if (!o.teach.isEmpty()) { JButton bk = btn("Book Session", () -> book(o.username, me.username, o.teach.get(0))); bk.setFont(f(Font.BOLD, 16)); bk.setBorder(new EmptyBorder(10, 18, 10, 18)); hbr.add(bk); }
         hb.add(hbr); h.add(hav, BorderLayout.WEST); h.add(hi); h.add(hb, BorderLayout.EAST); return h;
     }
@@ -378,7 +427,11 @@ public class MessagesScreen {
         JPanel hb = new JPanel(new GridBagLayout()); hb.setOpaque(false); JPanel hbr = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0)); hbr.setOpaque(false);
         hbr.add(ghost("Members", () -> groupMembers(gr)));
         final boolean inThis = campus.skillswap.service.GroupCalls.inRoom(gr.id); final List<String> liveU = campus.skillswap.service.GroupCalls.liveUsers(gr); final boolean running = !inThis && !liveU.isEmpty(), isFull = running && campus.skillswap.service.GroupCalls.full(gr);
-        JButton vc = btn(inThis ? "Back to call" : isFull ? "Call is full" : running ? "Join call" : "Group call", () -> campus.skillswap.service.GroupCalls.start(gr)); vc.setBackground(GREEN); vc.setForeground(ONACC); vc.setFont(f(Font.BOLD, 16)); vc.setBorder(new EmptyBorder(10, 18, 10, 18)); vc.setEnabled(!isFull); hbr.add(vc);
+        String callText = inThis ? "Back to call" : isFull ? "Call is full" : running ? "Join call" : "";
+        JButton vc = callButton(callText.isEmpty() ? "Group call" : callText, videoIcon(22, ONACC), true, () -> campus.skillswap.service.GroupCalls.start(gr));
+        vc.setText(callText); vc.setIconTextGap(callText.isEmpty() ? 0 : 8);
+        if (!callText.isEmpty()) { vc.setFont(f(Font.BOLD, 16)); vc.setBorder(new EmptyBorder(10, 18, 10, 18)); }
+        vc.setEnabled(!isFull); if (isFull) vc.setDisabledIcon(videoIcon(22, MUTED)); hbr.add(vc);
         hb.add(hbr); h.add(hav, BorderLayout.WEST); h.add(hi); h.add(hb, BorderLayout.EAST);
         if (!inThis && !running) return h;
         // "call in progress" strip under the header, like Messenger / Meet: who is in it and a Join button
@@ -395,7 +448,7 @@ public class MessagesScreen {
         Map<String, Long> lastT = new HashMap<>();
         for (Msg m : S.msgs) { if (m.from.equals(me.username)) lastT.merge(m.to, m.time, Math::max); else if (m.to.equals(me.username)) lastT.merge(m.from, m.time, Math::max); else if (Group.isKey(m.to)) lastT.merge(m.to, m.time, Math::max); }
         List<Object> convos = new ArrayList<>();
-        for (User u : S.users.values()) if (u != me) convos.add(u);
+        for (User u : S.users.values()) if (u != me && !u.banned) convos.add(u);
         for (Group g : S.groups) if (g.has(me.username)) { convos.add(g); lastT.putIfAbsent(g.key(), g.created); }
         java.util.function.Function<Object, String> keyOf = c -> c instanceof User ? ((User) c).username : ((Group) c).key();
         java.util.function.Function<Object, String> titleOf = c -> c instanceof User ? name((User) c) : ((Group) c).name;

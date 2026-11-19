@@ -54,20 +54,8 @@ import static campus.skillswap.ui.media.Reels.*;
 public class ConnectionScreen {
 
     public static boolean connectLoop(String err) {
-        while (true) {
-            String last = c("conn.mode", "host");
-            JRadioButton rh = radio("Host on this Wi-Fi / LAN  (no database needed - best for testing)", last.equals("host"));
-            JRadioButton rj = radio("Join a host on this Wi-Fi / LAN", last.equals("join"));
-            JRadioButton rp = radio("Shared PostgreSQL database  (for real deployment)", last.equals("pg"));
-            ButtonGroup bg = new ButtonGroup(); JPanel col = new JPanel(); col.setLayout(new BoxLayout(col, BoxLayout.Y_AXIS)); col.setBackground(PANEL);
-            for (JRadioButton r : new JRadioButton[]{rh, rj, rp}) { bg.add(r); r.setOpaque(false); r.setForeground(TXT); r.setFont(f(Font.BOLD, 13)); r.setBorder(new EmptyBorder(6, 4, 6, 4)); col.add(r); }
-            JPanel wrap = new JPanel(new BorderLayout(0, 8)); wrap.setBackground(PANEL);
-            if (!err.isEmpty()) wrap.add(lbl("<html><body style='width:340px'>" + esc(err) + "</body></html>", Font.BOLD, 11, PINKT), BorderLayout.NORTH);
-            wrap.add(col);
-            if (!ask("How do you want to connect?", wrap)) return false;
-            String m = rh.isSelected() ? "host" : rj.isSelected() ? "join" : "pg"; cfg.setProperty("conn.mode", m); saveCfg(); err = "";
-            if (m.equals("host") ? connectHost() : m.equals("join") ? connectJoin() : connectPostgres("")) return true;
-        }
+        cfg.setProperty("conn.mode", "pg"); saveCfg();
+        return connectPostgres(err);
     }
     static boolean connectHost() {
         JTextField po = field(); po.setText(c("lan.port", String.valueOf(LanSync.DEFAULT_PORT)));
@@ -88,6 +76,23 @@ public class ConnectionScreen {
             info("Connected to the host. Create an account or sign in."); return true;
         } catch (Exception ex) { info("Could not join: " + ex.getMessage()); return false; }
     }
+    /** Connection form with a label above each field, so nothing gets clipped when the dialog opens. */
+    static JPanel dbForm(JTextField h, JTextField po, JTextField dn, JTextField us, JPasswordField pw, JCheckBox rem) {
+        JPanel f = vbox(); f.setBackground(PANEL);
+        put(f, lbl("Supabase: copy the values from Project Settings > Database.", Font.PLAIN, 11, MUTED));
+        gap(f, 10);
+        dbField(f, "Host", h);
+        dbField(f, "Port", po);
+        dbField(f, "Database", dn);
+        dbField(f, "User", us);
+        dbField(f, "Password", pw);
+        gap(f, 2); put(f, rem);
+        f.setPreferredSize(new Dimension(420, f.getPreferredSize().height));
+        return f;
+    }
+    static void dbField(JPanel box, String label, JComponent comp) {
+        put(box, lbl(label, Font.BOLD, 12, TXT)); gap(box, 3); put(box, comp); gap(box, 9);
+    }
     public static boolean connectPostgres(String err) {
         try { Class.forName("org.postgresql.Driver"); }
         catch (ClassNotFoundException e) {
@@ -99,11 +104,11 @@ public class ConnectionScreen {
             JTextField h = field(), po = field(), dn = field(), us = field(); JPasswordField pw = pass(); JCheckBox rem = check("Remember password on this computer", false);
             h.setText(c("db.host", "localhost")); po.setText(c("db.port", "5432")); dn.setText(c("db.name", "skillswap")); us.setText(c("db.user", "postgres"));
             pw.setText(c("db.password", System.getenv().getOrDefault("SKILLSWAP_DB_PASSWORD", ""))); rem.setSelected(!c("db.password", "").isEmpty());
-            JPanel f = form(new String[]{"Host", "Port", "Database", "User", "Password", ""}, new JComponent[]{h, po, dn, us, pw, rem}); f.setPreferredSize(new Dimension(380, 230));
+            JPanel f = dbForm(h, po, dn, us, pw, rem);
             JPanel wrap = new JPanel(new BorderLayout(0, 8)); wrap.setBackground(PANEL);
             if (!err.isEmpty()) wrap.add(lbl("<html><body style='width:340px'>" + esc(err) + "</body></html>", Font.BOLD, 11, PINKT), BorderLayout.NORTH);
             wrap.add(f);
-            if (!ask("Connect to PostgreSQL", wrap)) return false;
+            if (!ask("Connect to PostgreSQL / Supabase", wrap)) return false;
             String host = h.getText().trim(), port = po.getText().trim(), name = dn.getText().trim().toLowerCase(), user = us.getText().trim(), pass = new String(pw.getPassword());
             Connection a = null, b = null;
             try {
@@ -126,6 +131,7 @@ public class ConnectionScreen {
         S = st; snap = fp;
         if (me != null) {
             me = S.users.get(me.username); if (me == null) { rootCards.show(root, "login"); return; }
+            if (!sessionValid()) return;
             for (Msg m : S.msgs) MessagesScreen.notifyNew(m, cutoff);
             for (Sess s : S.sessions) if (involves(s, me)) { String o = old.get(s.id); boolean req = s.requester.equals(me.username);
                 if (o == null && s.status.equals("PENDING") && !req) notifyUser("New swap request", name(s.requester) + " wants a " + s.skill + " session" + (s.videoCall ? " (video call requested)" : ""));

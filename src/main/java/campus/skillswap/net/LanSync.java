@@ -147,7 +147,10 @@ public class LanSync {
     }
 
     // ---------- called by Database ----------
-    public static void initData() { snap = fingerprints(S); ver++; if (flusher == null) { flusher = new javax.swing.Timer(1000, e -> flush(false)); flusher.start(); } }
+    public static void initData() {
+        if (mode.equals("host") && ensureModerator()) { snap = fingerprints(S); persist(); } else snap = fingerprints(S);
+        ver++; if (flusher == null) { flusher = new javax.swing.Timer(1000, e -> flush(false)); flusher.start(); }
+    }
     public static int newId() {
         int id; do { id = ThreadLocalRandom.current().nextInt(1, Integer.MAX_VALUE); } while (idUsed(id)); return id;
     }
@@ -224,6 +227,7 @@ public class LanSync {
         if (mode.equals("host")) persist();
         if (me == null) return;
         me = S.users.get(me.username); if (me == null) { rootCards.show(root, "login"); return; }
+        if (!sessionValid()) return;
         if (force) return;
         for (Delta d : ds) {
             for (Msg m : d.msgs) campus.skillswap.ui.screens.MessagesScreen.notifyNew(m, cutoff);
