@@ -66,8 +66,16 @@ public class AppShell {
         sidebar = new JPanel(); sidebar.setLayout(new BoxLayout(sidebar, BoxLayout.Y_AXIS)); sidebar.setBackground(PANEL); sidebar.setPreferredSize(new Dimension(224, 0));
         content = new JPanel(new BorderLayout()); content.setBackground(BG);
         rightPanel = new JPanel(); rightPanel.setLayout(new BoxLayout(rightPanel, BoxLayout.Y_AXIS)); rightPanel.setBackground(SIDE2);
-        // rightPanel sits at the top of a BorderLayout so the scroll viewport can never stretch its children (that caused big empty gaps)
-        JPanel rightWrap = new JPanel(new BorderLayout()); rightWrap.setBackground(SIDE2); rightWrap.add(rightPanel, BorderLayout.NORTH);
+        // rightPanel sits at the top of a BorderLayout so the scroll viewport can never stretch its children (that caused big empty gaps).
+        // Tracking the viewport width keeps the rail from growing wider than its column (which made it scroll/clip sideways on small screens).
+        JPanel rightWrap = new JPanel(new BorderLayout()) {
+            public Dimension getPreferredScrollableViewportSize() { return getPreferredSize(); }
+            public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) { return 20; }
+            public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) { return 100; }
+            public boolean getScrollableTracksViewportWidth() { return true; }
+            public boolean getScrollableTracksViewportHeight() { return false; }
+        };
+        rightWrap.setBackground(SIDE2); rightWrap.add(rightPanel, BorderLayout.NORTH);
         rightScroll = new JScrollPane(rightWrap, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER); rightScroll.setBorder(new MatteBorder(0, CB, 0, 0, INK));
         rightScroll.setPreferredSize(new Dimension(276, 0)); rightScroll.getViewport().setBackground(SIDE2);
         statusBar = lbl(" ", Font.BOLD, 11, TXT); statusBar.setBorder(new EmptyBorder(5, 12, 5, 12)); JPanel sb = new JPanel(new BorderLayout()); sb.setBackground(YEL); sb.setBorder(new MatteBorder(CB, 0, 0, 0, INK)); statusBar.setForeground(ONACC); sb.add(statusBar);
@@ -111,6 +119,19 @@ public class AppShell {
             }
         };
     }
+    /** Small circular counter used on sidebar items (earned certificates, unread messages). */
+    static void addSidebarCount(RBtn b, long n) {
+        if (n <= 0) return;
+        String t = n > 99 ? "99+" : Long.toString(n);
+        JLabel bd = new JLabel(t, SwingConstants.CENTER) { protected void paintComponent(Graphics g0) { Graphics2D g = (Graphics2D) g0.create(); aa(g); g.setColor(getBackground()); g.fillOval(0, 0, getWidth() - 1, getHeight() - 1);
+            g.setColor(INK); g.setStroke(new BasicStroke(2f)); g.drawOval(1, 1, getWidth() - 3, getHeight() - 3); g.dispose(); super.paintComponent(g0); } };
+        bd.setOpaque(false); bd.setBackground(PINK); bd.setForeground(ONACC); bd.setFont(f(Font.BOLD, 11));
+        bd.setPreferredSize(new Dimension(Math.max(24, bd.getFontMetrics(bd.getFont()).stringWidth(t) + 10), 24));
+        MouseAdapter click = new MouseAdapter() { public void mousePressed(MouseEvent e) { if (SwingUtilities.isLeftMouseButton(e)) b.doClick(); } };
+        bd.addMouseListener(click); bd.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        JPanel wrap = new JPanel(new GridBagLayout()); wrap.setOpaque(false); wrap.add(bd); wrap.addMouseListener(click); wrap.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        b.setLayout(new BorderLayout()); b.add(wrap, BorderLayout.EAST);
+    }
     public static void buildSidebar() {
         if (me != null && me.moderator) { buildModeratorSidebar(); return; }
         sidebar.removeAll(); sidebar.setBorder(new CompoundBorder(new MatteBorder(0, 0, 0, CB, INK), new EmptyBorder(16, 12, 14, 12)));
@@ -125,12 +146,11 @@ public class AppShell {
             b.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42)); b.setCursor(new Cursor(Cursor.HAND_CURSOR));
             if (n[0].equals("Certs")) {
                 long earned = badges(me).stream().filter(x -> x[2].equals("Earned")).count();
-                if (earned > 0) {
-                    JLabel bd = new JLabel("" + earned, SwingConstants.CENTER) { protected void paintComponent(Graphics g0) { Graphics2D g = (Graphics2D) g0.create(); aa(g); g.setColor(getBackground()); g.fillOval(0, 0, getWidth() - 1, getHeight() - 1);
-                        g.setColor(INK); g.setStroke(new BasicStroke(2f)); g.drawOval(1, 1, getWidth() - 3, getHeight() - 3); g.dispose(); super.paintComponent(g0); } };
-                    bd.setOpaque(false); bd.setBackground(PINK); bd.setForeground(ONACC); bd.setFont(f(Font.BOLD, 11)); bd.setPreferredSize(new Dimension(24, 24));
-                    JPanel w = new JPanel(new GridBagLayout()); w.setOpaque(false); w.add(bd); b.setLayout(new BorderLayout()); b.add(w, BorderLayout.EAST);
-                }
+                addSidebarCount(b, earned);
+            }
+            if (n[0].equals("Messages")) {
+                long unread = unreadCount();
+                if (unread > 0) { addSidebarCount(b, unread); b.setToolTipText(unread + " unread message" + (unread == 1 ? "" : "s")); }
             }
             if (n[0].equals("Moderation")) {
                 long open = S.reports.stream().filter(r -> !r.resolved).count();
@@ -171,11 +191,25 @@ public class AppShell {
         us.sort((x, y) -> board.equals("Most Active") ? Long.compare(taught(y), taught(x)) : Long.compare(learnedN(y), learnedN(x)));
         int rank = 1;
         for (User u : us.subList(0, Math.min(5, us.size()))) {
-            JPanel r = card(); r.setBorder(new EmptyBorder(6, 8, 6, 4)); JPanel inf = vbox();
-            JPanel nm = row(); nm.add(lbl(rank++ + ". " + name(u), Font.BOLD, 12, TXT)); if (verified(u)) nm.add(tag("\u2713", GREEN)); put(inf, nm);
-            put(inf, lbl((board.equals("Most Active") ? taught(u) + " sessions taught" : learnedN(u) + " skills learned") + (u.publicRatings && !reviews(u).isEmpty() ? "  " + String.format("%.1f", avg(u)) + "\u2605" : ""), Font.PLAIN, 11, MUTED));
+            JPanel r = card(); r.setBorder(new EmptyBorder(6, 8, 6, 4));
+            r.add(avatarWrap(name(u), 36), BorderLayout.WEST);
+            JPanel inf = vbox();
+            JPanel nm = row(); nm.add(lbl(rank++ + ". " + name(u), Font.BOLD, 11, TXT)); if (verified(u)) nm.add(lbl("\u2713", Font.BOLD, 10, GREEN)); put(inf, nm);
+            put(inf, lbl(board.equals("Most Active") ? taught(u) + " taught" : learnedN(u) + " learned", Font.PLAIN, 10, MUTED));
+            JPanel rt = row();
+            if (u.publicRatings && !reviews(u).isEmpty()) { rt.add(new StarRating(12, true).value(avg(u))); rt.add(lbl(String.format("%.1f", avg(u)), Font.BOLD, 11, GOLD)); }
+            else rt.add(lbl("No reviews yet", Font.PLAIN, 10, MUTED));
+            put(inf, rt);
             r.add(inf, BorderLayout.CENTER);
-            if (u != me && !u.teach.isEmpty()) r.add(btn("Book", () -> book(u.username, me.username, u.teach.get(0))), BorderLayout.EAST);
+            if (u != me && !u.teach.isEmpty()) {
+                JButton bk = btn("Book", () -> book(u.username, me.username, u.teach.get(0)));
+                bk.setFont(f(Font.BOLD, 11)); bk.setBorder(new EmptyBorder(4, 7, 4, 7));
+                JPanel be = new JPanel(new GridBagLayout()); be.setOpaque(false); be.add(bk); r.add(be, BorderLayout.EAST);
+            } else {
+                JButton vw = ghost("View", () -> profileDialog(u));
+                vw.setFont(f(Font.BOLD, 11)); vw.setBorder(new EmptyBorder(4, 7, 4, 7));
+                JPanel be = new JPanel(new GridBagLayout()); be.setOpaque(false); be.add(vw); r.add(be, BorderLayout.EAST);
+            }
             put(rightPanel, r); gap(rightPanel, 5);
         }
         gap(rightPanel, 14); put(rightPanel, lbl("CAMPUS BADGES", Font.BOLD, 14, TXT)); gap(rightPanel, 6);
@@ -188,7 +222,9 @@ public class AppShell {
     }
     public static void buildRightProfile() {
         put(rightPanel, lbl("MY RATING", Font.BOLD, 14, TXT)); gap(rightPanel, 6); List<Sess> rs = reviews(me);
-        JPanel big = row(); big.add(lbl(rs.isEmpty() ? "-" : String.format("%.1f", avg(me)), Font.BOLD, 28, TXT)); big.add(lbl(stars(avg(me)) + "  (" + rs.size() + ")", Font.PLAIN, 12, GOLD)); put(rightPanel, big);
+        JPanel big = row(); big.add(lbl(rs.isEmpty() ? "-" : String.format("%.1f", avg(me)), Font.BOLD, 34, TXT));
+        JPanel st2 = vbox(); st2.add(new StarRating(18, true).value(avg(me)));
+        st2.add(lbl(rs.isEmpty() ? "no reviews yet" : rs.size() + (rs.size() == 1 ? " review" : " reviews"), Font.PLAIN, 10, MUTED)); big.add(st2); put(rightPanel, big);
         if (!me.publicRatings) put(rightPanel, lbl("Private - only you can see this", Font.PLAIN, 10, MUTED));
         for (int st = 5; st >= 1; st--) { final int s2 = st; long n = rs.stream().filter(x -> x.rating == s2).count(); JPanel r = new JPanel(new BorderLayout(8, 0)) { public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE, 22); } }; r.setOpaque(false);
             JLabel sl = lbl(st + " \u2605", Font.BOLD, 11, GOLD); sl.setPreferredSize(new Dimension(32, 16)); r.add(sl, BorderLayout.WEST); JProgressBar pb = bar(0, Math.max(1, rs.size()), (int) n, YEL);

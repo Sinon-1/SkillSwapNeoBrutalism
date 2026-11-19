@@ -1,5 +1,6 @@
 package campus.skillswap.ui.screens;
 
+import javax.imageio.ImageIO;
 import javax.swing.*;
 import javax.swing.Timer;
 import javax.swing.border.*;
@@ -53,6 +54,9 @@ import static campus.skillswap.ui.screens.NearbyScreen.*;
 import static campus.skillswap.ui.screens.ProfileScreen.*;
 import static campus.skillswap.ui.media.Videos.*;
 import static campus.skillswap.ui.media.Reels.*;
+import campus.skillswap.ui.media.ChatAttachments;
+import campus.skillswap.ui.media.PickerPreview;
+import campus.skillswap.ui.media.Videos;
 
 /** Chat. */
 public class MessagesScreen {
@@ -63,15 +67,55 @@ public class MessagesScreen {
     public static Group groupOf(String key) { if (!Group.isKey(key)) return null; for (Group g : S.groups) if (g.key().equals(key)) return g; return null; }
     static boolean validChat(String key) { if (key == null) return false; if (Group.isKey(key)) { Group g = groupOf(key); return g != null && g.has(me.username); } User u = S.users.get(key); return u != null && !u.banned; }
 
+    /** Incoming messages that the user has not seen in their chat yet. Session only, like desktop notifications. */
+    static final Set<Integer> UNREAD = ConcurrentHashMap.newKeySet();
+    static String unreadUser;
+
+    static void ensureUnreadOwner() {
+        String u = me == null ? null : me.username;
+        if (!Objects.equals(unreadUser, u)) { unreadUser = u; UNREAD.clear(); }
+    }
+    public static void clearUnread() { UNREAD.clear(); unreadUser = me == null ? null : me.username; }
+    static boolean incomingForMe(Msg m) {
+        if (me == null || m == null || m.from.equals(me.username)) return false;
+        if (m.to.equals(me.username)) return true;
+        Group g = groupOf(m.to);
+        return g != null && g.has(me.username);
+    }
+    public static int unreadCount() {
+        ensureUnreadOwner();
+        if (me == null) return 0;
+        UNREAD.removeIf(id -> {
+            Msg m = msgById(id);
+            return m == null || m.deleted || m.hiddenFor(me.username) || !incomingForMe(m);
+        });
+        return UNREAD.size();
+    }
+    /** Called when a conversation is actually rendered, so only chats the user has opened lose their badge. */
+    static void markChatRead(String target) {
+        if (me == null || target == null) return;
+        ensureUnreadOwner();
+        boolean grp = Group.isKey(target);
+        UNREAD.removeIf(id -> {
+            Msg m = msgById(id);
+            if (m == null || m.deleted || m.hiddenFor(me.username) || m.from.equals(me.username)) return true;
+            return grp ? m.to.equals(target) : m.from.equals(target) && m.to.equals(me.username);
+        });
+    }
+
     /** Notification for a message that just arrived (direct or in one of my groups). Also moves lastMsgSeen forward. */
     public static void notifyNew(Msg m, long cutoff) {
-        if (me == null || m.time <= cutoff || m.from.equals(me.username)) return;
+        if (me == null || m.time <= cutoff || m.from.equals(me.username) || m.deleted) return;
         boolean direct = m.to.equals(me.username); Group g = direct ? null : groupOf(m.to);
         if (!direct && (g == null || !g.has(me.username))) return;
         lastMsgSeen = Math.max(lastMsgSeen, m.time);
-        if (g != null && m.text.startsWith(SYS)) return;                                   // group notices do not pop up
-        if (page.equals("Messages") && (direct ? m.from.equals(chatWith) : m.to.equals(chatWith))) return;
-        notifyUser(g == null ? "New message" : "New message in " + g.name, name(m.from) + ": " + m.text.replace(SYS, ""));
+        boolean open = page.equals("Messages") && (direct ? m.from.equals(chatWith) : m.to.equals(chatWith));
+        boolean notice = m.text != null && m.text.startsWith(SYS);
+        if (!open && !notice && !m.hiddenFor(me.username)) { ensureUnreadOwner(); UNREAD.add(m.id); }
+        if (notice) return;                                                                 // system notices do not pop up
+        if (open) return;
+        String body = m.hasFile() ? (nz(m.text).isEmpty() ? "sent you a " + m.fileLabel() : m.fileLabel() + ": " + m.text) : m.text.replace(SYS, "");
+        notifyUser(g == null ? "New message" : "New message in " + g.name, name(m.from) + ": " + body.replace(SYS, ""));
     }
     public static JComponent groupAvatar(Group g, int sz) {
         return new JComponent() {
@@ -120,7 +164,7 @@ public class MessagesScreen {
             if (picked.size() < 2) { err = "Pick at least 2 people (use a normal chat for just one person)."; continue; }
             Group g = new Group(); g.id = nextId(); g.name = nm; g.creator = me.username; g.created = System.currentTimeMillis(); g.members.add(me.username); g.members.addAll(picked);
             S.groups.add(g); sendMsg(g.key(), SYS + name(me) + " created the group");
-            chatWith = g.key(); draft = ""; editing = 0; show("Messages"); return;
+            chatWith = g.key(); draft = ""; editing = 0; pendingAttach = null; show("Messages"); return;
         }
     }
     static void groupMembers(Group g) {
@@ -169,23 +213,31 @@ public class MessagesScreen {
         if (campus.skillswap.service.GroupCalls.activeGroupId() == g.id) campus.skillswap.service.GroupCalls.leave();
         sendMsg(g.key(), SYS + name(me) + " left the group"); g.members.remove(me.username);
         if (g.creator.equals(me.username) && !g.members.isEmpty()) g.creator = g.members.get(0);
-        save(); chatWith = null; draft = ""; editing = 0; show("Messages");
+        save(); chatWith = null; draft = ""; editing = 0; pendingAttach = null; show("Messages");
     }
 
     // ====================== MESSAGES ======================
     public static void sendMsg(String to, String text) {
         Msg m = new Msg(); m.id = nextId(); m.from = me.username; m.to = to; m.text = text; m.time = System.currentTimeMillis(); S.msgs.add(m); save();
     }
+    static void sendFile(String to, String text, File f) {
+        Msg m = new Msg(); m.id = nextId(); m.from = me.username; m.to = to; m.text = nz(text); m.time = System.currentTimeMillis();
+        ChatAttachments.attach(m, f); ChatAttachments.keepLocal(m, f); S.msgs.add(m); save();
+        ChatAttachments.upload(m, f, null, err -> { toast("Attachment upload failed: " + err); if (page.equals("Messages")) show("Messages"); });
+    }
     /** Id of the message currently being edited in the composer (0 = none), like Messenger's edit mode. */
     static int editing = 0;
+    static File pendingAttach;
+    static String composerChat, composerUser;
+    static final Map<Integer, ImageIcon> PHOTO_THUMBS = new ConcurrentHashMap<>();
     public static final long EDIT_WINDOW_MS = 15 * 60 * 1000L;   // Messenger only allows edits for 15 minutes; unsend has no limit
     public static Msg msgById(int id) { for (Msg m : S.msgs) if (m.id == id) return m; return null; }
-    public static void editMsg(Msg m) { editing = m.id; draft = m.text; show("Messages"); }
+    public static void editMsg(Msg m) { editing = m.id; draft = m.text; pendingAttach = null; show("Messages"); }
     public static void cancelEdit() { editing = 0; draft = ""; show("Messages"); }
     public static void unsend(Msg m) {
         if (!m.from.equals(me.username) || m.deleted) return;
         if (!ask("Unsend message", lbl("<html><body style='width:280px'>Unsend this message for everyone in the chat? They will see that you unsent a message.</body></html>", Font.PLAIN, 13, TXT))) return;
-        m.deleted = true; m.text = ""; m.edited = false; if (editing == m.id) { editing = 0; draft = ""; } save(); show("Messages");
+        m.deleted = true; m.text = ""; m.edited = false; ChatAttachments.removeCached(m); PHOTO_THUMBS.remove(m.id); if (editing == m.id) { editing = 0; draft = ""; } save(); show("Messages");
     }
     public static void removeForMe(Msg m) {
         if (!ask("Remove for you", lbl("<html><body style='width:280px'>Remove this message from your chat? The other person will still see it.</body></html>", Font.PLAIN, 13, TXT))) return;
@@ -195,7 +247,11 @@ public class MessagesScreen {
     static JPopupMenu msgMenu(Msg m, boolean mine) {
         JPopupMenu pm = new JPopupMenu(); pm.setBorder(new LineBorder(INK, BW)); pm.setBackground(PANEL);
         java.util.function.BiConsumer<String, Runnable> add = (t, r) -> { JMenuItem it = new JMenuItem(t); it.setFont(f(Font.BOLD, 12)); it.setForeground(TXT); it.setBackground(PANEL); it.setBorder(new EmptyBorder(8, 14, 8, 22)); it.addActionListener(e -> r.run()); pm.add(it); };
-        if (!m.deleted) add.accept("Copy", () -> Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(m.text), null));
+        if (!m.deleted && !nz(m.text).isEmpty()) add.accept("Copy", () -> Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(m.text), null));
+        if (!m.deleted && m.hasFile()) {
+            add.accept("Open attachment", () -> openAttachment(m));
+            add.accept("Save attachment as...", () -> saveAttachment(m));
+        }
         if (mine && !m.deleted) {
             if (System.currentTimeMillis() - m.time <= EDIT_WINDOW_MS) add.accept("Edit", () -> editMsg(m));
             else { JMenuItem d = new JMenuItem("Edit (15 min limit passed)"); d.setEnabled(false); d.setFont(f(Font.PLAIN, 12)); d.setBorder(new EmptyBorder(8, 14, 8, 22)); pm.add(d); }
@@ -301,7 +357,12 @@ public class MessagesScreen {
     static JComponent msgRow0(Msg m, boolean mine, String who) {
         JPopupMenu pm = msgMenu(m, mine);
         if (m.deleted) { JComponent r = unsentRow(mine, who); r.addMouseListener(popupOn(pm)); return r; }
-        JPanel content = vbox(); put(content, wrapLabel(m.text, mine ? ONPINK : TXT, 14));
+        JPanel content = vbox();
+        if (m.hasFile()) {
+            put(content, attachmentCard(m, mine));
+            if (!nz(m.text).isEmpty()) { gap(content, 8); put(content, wrapLabel(m.text, mine ? ONPINK : TXT, 14)); }
+        } else put(content, wrapLabel(m.text, mine ? ONPINK : TXT, 14));
+        if (m.fileError != null) put(content, lbl("Upload failed: " + m.fileError, Font.ITALIC, 10, mine ? ONPINK : PINKT));
         if (m.edited) { JLabel ed = lbl("edited", Font.ITALIC, 10, mine ? ONPINK : MUTED); put(content, ed); }
         JPanel b = bubble(content, mine ? PINK : PANEL, 12, 18, 0);
         b.setToolTipText(Instant.ofEpochMilli(m.time).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("MMM d, h:mm a")));
@@ -312,6 +373,116 @@ public class MessagesScreen {
         JPanel r = new JPanel(new BorderLayout()); r.setOpaque(false); r.setBorder(new EmptyBorder(6, 0, 6, 0)); r.add(line, mine ? BorderLayout.EAST : BorderLayout.WEST);
         MouseAdapter ma = popupOn(pm); b.addMouseListener(ma); for (Component c : content.getComponents()) c.addMouseListener(ma);
         return r;
+    }
+    static String shortName(String s, int max) {
+        s = nz(s); if (s.isEmpty()) s = "attachment";
+        return s.length() <= max ? s : s.substring(0, Math.max(1, max - 3)) + "...";
+    }
+    static JComponent attachmentCard(Msg m, boolean mine) {
+        if ("image".equals(m.fileKind)) return imageAttachment(m);
+        return fileAttachment(m, "video".equals(m.fileKind));
+    }
+    static JComponent imageAttachment(Msg m) {
+        JLabel pic = new JLabel("Loading photo...", SwingConstants.CENTER);
+        pic.setOpaque(true); pic.setBackground(new Color(0x2A2A34)); pic.setForeground(Color.WHITE);
+        pic.setFont(f(Font.BOLD, 12)); pic.setBorder(new LineBorder(INK, BW));
+        Dimension d = new Dimension(280, 190); pic.setPreferredSize(d); pic.setMinimumSize(d);
+        pic.setCursor(new Cursor(Cursor.HAND_CURSOR)); pic.setToolTipText("Click to view");
+        pic.addMouseListener(new MouseAdapter() { public void mouseClicked(MouseEvent e) { viewImage(m); } });
+        ImageIcon ready = PHOTO_THUMBS.get(m.id);
+        if (ready != null) { pic.setText(""); pic.setIcon(ready); return pic; }
+        if (m.fileError != null) pic.setText("Upload failed");
+        else loadThumb(pic, m, 0);
+        return pic;
+    }
+    static void loadThumb(JLabel pic, Msg m, int attempt) {
+        if (PHOTO_THUMBS.containsKey(m.id)) { ImageIcon r = PHOTO_THUMBS.get(m.id); pic.setText(""); pic.setIcon(r); pic.revalidate(); return; }
+        ChatAttachments.withFile(m, file -> new Thread(() -> {
+            try {
+                BufferedImage im = ImageIO.read(file);
+                if (im == null) throw new IOException("not an image");
+                double sc = Math.min(280.0 / im.getWidth(), 190.0 / im.getHeight());
+                int w = Math.max(1, (int) (im.getWidth() * sc)), h = Math.max(1, (int) (im.getHeight() * sc));
+                BufferedImage small = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+                Graphics2D g = small.createGraphics(); g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                g.drawImage(im, 0, 0, w, h, null); g.dispose();
+                ImageIcon icon = new ImageIcon(small); PHOTO_THUMBS.put(m.id, icon);
+                SwingUtilities.invokeLater(() -> { pic.setText(""); pic.setIcon(icon); pic.revalidate(); });
+            } catch (Exception e) {
+                SwingUtilities.invokeLater(() -> pic.setText("Can't show this photo"));
+            }
+        }, "chat-photo").start(), err -> SwingUtilities.invokeLater(() -> {
+            if (m.deleted) { pic.setText(""); return; }
+            if (attempt < 20) {
+                pic.setText("Loading photo...");
+                Timer t = new Timer(2000, e -> loadThumb(pic, m, attempt + 1)); t.setRepeats(false); t.start();
+            } else pic.setText("Could not load photo");
+        }));
+    }
+    static JComponent fileAttachment(Msg m, boolean video) {
+        JPanel card = new JPanel(new BorderLayout(12, 0));
+        card.setOpaque(true); card.setBackground(FIELD);
+        card.setBorder(new CompoundBorder(new LineBorder(INK, BW), new EmptyBorder(10, 12, 10, 12)));
+        JPanel info = vbox();
+        JPanel type = row(); type.add(tag(video ? "VIDEO" : "FILE", video ? GOLD : MUTED)); type.add(lbl(mb(m.fileSize), Font.BOLD, 11, MUTED));
+        put(info, type); gap(info, 6); put(info, lbl(shortName(m.fileName, 38), Font.BOLD, 13, TXT));
+        put(info, lbl(nz(m.fileMime).isEmpty() ? m.fileLabel() : m.fileMime, Font.PLAIN, 10, MUTED));
+        JPanel actions = new JPanel(new BorderLayout(0, 4)); actions.setOpaque(false);
+        JButton open = ghost(video ? "Play" : "Open", () -> openAttachment(m)); open.setFont(f(Font.BOLD, 11));
+        JButton save = ghost("Save", () -> saveAttachment(m)); save.setFont(f(Font.BOLD, 11));
+        actions.add(open, BorderLayout.NORTH); actions.add(save, BorderLayout.SOUTH);
+        card.add(info); card.add(actions, BorderLayout.EAST);
+        return card;
+    }
+    static void openAttachment(Msg m) {
+        if (!m.hasFile() || m.deleted) return;
+        String kind = nz(m.fileKind);
+        if ("image".equals(kind)) viewImage(m);
+        else if ("video".equals(kind)) playAttachment(m);
+        else ChatAttachments.withFile(m, MessagesScreen::openWithDesktop, err -> toast("Could not open attachment: " + err));
+    }
+    static void openWithDesktop(File f) {
+        try {
+            if (Desktop.isDesktopSupported()) Desktop.getDesktop().open(f);
+            else toast("This computer cannot open that file");
+        } catch (Exception e) { toast("Could not open attachment: " + nz(e.getMessage()).split("\n")[0]); }
+    }
+    static void viewImage(Msg m) {
+        ChatAttachments.withFile(m, file -> new Thread(() -> {
+            try {
+                BufferedImage im = ImageIO.read(file);
+                if (im == null) throw new IOException("not an image");
+                double sc = Math.min(900.0 / im.getWidth(), 700.0 / im.getHeight());
+                int w = Math.max(1, (int) (im.getWidth() * sc)), h = Math.max(1, (int) (im.getHeight() * sc));
+                BufferedImage big = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+                Graphics2D g = big.createGraphics(); g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                g.drawImage(im, 0, 0, w, h, null); g.dispose();
+                SwingUtilities.invokeLater(() -> {
+                    busy++; try { JOptionPane.showMessageDialog(frame, new JLabel(new ImageIcon(big)), shortName(m.fileName, 60), JOptionPane.PLAIN_MESSAGE); }
+                    finally { busy--; }
+                });
+            } catch (Exception e) { SwingUtilities.invokeLater(() -> toast("Could not show that photo")); }
+        }, "chat-photo-view").start(), err -> toast("Could not load photo: " + err));
+    }
+    static void playAttachment(Msg m) {
+        ChatAttachments.withFile(m, file -> {
+            JComponent player = Videos.fxPlayer(file, 720, 405, err -> toast("This video cannot be played: " + err));
+            if (player == null) { openWithDesktop(file); return; }
+            JDialog d = new JDialog(frame, shortName(m.fileName, 60), false);
+            d.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+            d.addWindowListener(new WindowAdapter() { public void windowClosed(WindowEvent e) { Videos.fxStop(player); } });
+            d.add(player); d.pack(); d.setLocationRelativeTo(frame); d.setVisible(true);
+        }, err -> toast("Could not load video: " + err));
+    }
+    static void saveAttachment(Msg m) {
+        JFileChooser fc = new JFileChooser(); fc.setDialogTitle("Save attachment");
+        fc.setSelectedFile(new File(nz(m.fileName).isEmpty() ? "attachment" : m.fileName));
+        if (fc.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
+        final File dest = fc.getSelectedFile();
+        ChatAttachments.withFile(m, file -> new Thread(() -> {
+            try { Files.copy(file.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING); SwingUtilities.invokeLater(() -> toast("Saved " + dest.getName())); }
+            catch (Exception e) { SwingUtilities.invokeLater(() -> toast("Could not save attachment: " + nz(e.getMessage()).split("\n")[0])); }
+        }, "chat-file-save").start(), err -> toast("Could not load attachment: " + err));
     }
     static MouseAdapter popupOn(JPopupMenu pm) {
         return new MouseAdapter() {
@@ -340,7 +511,7 @@ public class MessagesScreen {
         mid.add(lbl(name(u), Font.BOLD, 16, nameC), g);
         r.add(west, BorderLayout.WEST); r.add(mid);
         if (last > 0) { JPanel e = new JPanel(new BorderLayout()); e.setOpaque(false); e.add(lbl(tshort(last), Font.BOLD, 12, nameC), BorderLayout.NORTH); r.add(e, BorderLayout.EAST); }
-        String un = u.username; r.addMouseListener(new MouseAdapter() { public void mouseClicked(MouseEvent ev) { chatWith = un; draft = ""; editing = 0; show("Messages"); } });
+        String un = u.username; r.addMouseListener(new MouseAdapter() { public void mouseClicked(MouseEvent ev) { chatWith = un; draft = ""; editing = 0; pendingAttach = null; show("Messages"); } });
         return r;
     }
     public static JComponent groupRow(Group g, long last, boolean sel) {
@@ -354,7 +525,7 @@ public class MessagesScreen {
         put(tv, lbl("GROUP \u2022 " + g.members.size() + " members" + (inCall ? "  \u25CF IN A CALL" : ""), Font.BOLD, 10, inCall ? (sel ? ONACC : GREEN) : (sel ? ONACC : MUTED))); mid.add(tv, gc);
         r.add(west, BorderLayout.WEST); r.add(mid);
         if (last > 0) { JPanel e = new JPanel(new BorderLayout()); e.setOpaque(false); e.add(lbl(tshort(last), Font.BOLD, 12, nameC), BorderLayout.NORTH); r.add(e, BorderLayout.EAST); }
-        String key = g.key(); r.addMouseListener(new MouseAdapter() { public void mouseClicked(MouseEvent ev) { chatWith = key; draft = ""; editing = 0; show("Messages"); } });
+        String key = g.key(); r.addMouseListener(new MouseAdapter() { public void mouseClicked(MouseEvent ev) { chatWith = key; draft = ""; editing = 0; pendingAttach = null; show("Messages"); } });
         return r;
     }
     /** Square call button whose label is a drawn icon; the tooltip keeps the action name accessible. */
@@ -443,6 +614,30 @@ public class MessagesScreen {
         if (!isFull) { JButton jb = ghost(inThis ? "Open" : "Join", () -> campus.skillswap.service.GroupCalls.start(gr)); jb.setFont(f(Font.BOLD, 11)); jb.setBorder(new EmptyBorder(4, 14, 4, 14)); ban.add(jb, BorderLayout.EAST); }
         north.add(ban, BorderLayout.SOUTH); return north;
     }
+    static void chooseAttachment(Component from) {
+        if (editing != 0) return;
+        JPopupMenu pm = new JPopupMenu(); pm.setBorder(new LineBorder(INK, BW)); pm.setBackground(PANEL);
+        java.util.function.BiConsumer<String, Runnable> add = (t, r) -> {
+            JMenuItem it = new JMenuItem(t); it.setFont(f(Font.BOLD, 12)); it.setForeground(TXT); it.setBackground(PANEL);
+            it.setBorder(new EmptyBorder(8, 14, 8, 22)); it.addActionListener(e -> r.run()); pm.add(it);
+        };
+        add.accept("Photo", () -> pickAttachment("image"));
+        add.accept("Video", () -> pickAttachment("video"));
+        add.accept("File", () -> pickAttachment("file"));
+        pm.show(from, 0, from.getHeight());
+    }
+    static void pickAttachment(String kind) {
+        JFileChooser fc = new JFileChooser(); fc.setAcceptAllFileFilterUsed(!"image".equals(kind) && !"video".equals(kind));
+        if ("image".equals(kind)) { fc.setDialogTitle("Choose a photo"); fc.setFileFilter(new FileNameExtensionFilter("Pictures", "jpg", "jpeg", "png", "gif", "bmp", "wbmp")); fc.setAccessory(new PickerPreview.ImagePreview(fc)); }
+        else if ("video".equals(kind)) { fc.setDialogTitle("Choose a video"); fc.setFileFilter(new FileNameExtensionFilter("Videos", "mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "flv", "mpg", "mpeg", "3gp", "ts", "mts", "m2ts", "ogv")); fc.setAccessory(new Videos.ChooserPreview(fc)); }
+        else fc.setDialogTitle("Choose a file");
+        PickerPreview.install(fc);
+        if (fc.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) return;
+        File f = fc.getSelectedFile();
+        if (f == null || !f.isFile()) return;
+        if (f.length() > ChatAttachments.MAX_FILE) { toast("That file is too large (" + mb(f.length()) + "). The limit is " + mb(ChatAttachments.MAX_FILE) + "."); return; }
+        pendingAttach = f; show("Messages");
+    }
     public static JComponent messagesPage() {
         JPanel rt = new JPanel(new BorderLayout()); rt.setBackground(BG);
         Map<String, Long> lastT = new HashMap<>();
@@ -454,6 +649,10 @@ public class MessagesScreen {
         java.util.function.Function<Object, String> titleOf = c -> c instanceof User ? name((User) c) : ((Group) c).name;
         convos.sort((x, y) -> { int k = Long.compare(lastT.getOrDefault(keyOf.apply(y), 0L), lastT.getOrDefault(keyOf.apply(x), 0L)); return k != 0 ? k : titleOf.apply(x).compareToIgnoreCase(titleOf.apply(y)); });
         if (!validChat(chatWith) && !convos.isEmpty()) chatWith = keyOf.apply(convos.get(0));
+        String userKey = me == null ? null : me.username;
+        if (!java.util.Objects.equals(composerUser, userKey) || !java.util.Objects.equals(composerChat, chatWith)) {
+            composerUser = userKey; composerChat = chatWith; draft = ""; editing = 0; pendingAttach = null;
+        }
 
         // ---- left: title, new group button, search pill, conversation list ----
         JPanel left = new JPanel(new BorderLayout()); left.setBackground(leftBg()); left.setPreferredSize(new Dimension(300, 0)); left.setBorder(new MatteBorder(0, 0, 0, CB, divider()));
@@ -481,6 +680,7 @@ public class MessagesScreen {
             JPanel e = new JPanel(new GridBagLayout()); e.setOpaque(false); e.add(lbl("Select a conversation to start chatting", Font.PLAIN, 14, MUTED)); right.add(e);
         } else {
             final String target = chatWith;
+            markChatRead(target);
             right.add(grp ? groupHeader(gr) : dmHeader(o), BorderLayout.NORTH);
 
             JPanel msgs = vbox(); msgs.setBorder(new EmptyBorder(16, 30, 16, 30));
@@ -498,27 +698,51 @@ public class MessagesScreen {
             JScrollPane sp = new JScrollPane(wrap); sp.setBorder(null); sp.getViewport().setBackground(BG); sp.getVerticalScrollBar().setUnitIncrement(18); right.add(sp);
             Timer st = new Timer(40, e -> sp.getVerticalScrollBar().setValue(sp.getVerticalScrollBar().getMaximum())); st.setRepeats(false); st.start();
 
-            JTextField in = pill("Type a message...", false); in.setText(draft);
+            JTextField in = pill(pendingAttach == null ? "Type a message..." : "Add a caption...", false); in.setText(draft);
             in.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
                 public void insertUpdate(javax.swing.event.DocumentEvent e) { draft = in.getText(); } public void removeUpdate(javax.swing.event.DocumentEvent e) { draft = in.getText(); } public void changedUpdate(javax.swing.event.DocumentEvent e) { draft = in.getText(); } });
             final Msg em = editing != 0 ? msgById(editing) : null; if (editing != 0 && (em == null || em.deleted || !em.from.equals(me.username) || !em.to.equals(target))) editing = 0;
-            Runnable send = () -> { String t = in.getText().trim(); if (t.isEmpty()) return; draft = "";
+            Runnable send = () -> {
+                String t = in.getText().trim();
                 if (t.startsWith(SYS)) t = t.substring(1).trim();                      // typed text can never pose as a notice line
-                if (t.isEmpty()) return;
-                if (editing != 0) { Msg tm = msgById(editing); editing = 0; if (tm != null && !tm.deleted && !t.equals(tm.text)) { tm.text = t; tm.edited = true; save(); } }
-                else sendMsg(target, t);
-                show("Messages"); }; in.addActionListener(e -> send.run());
+                if (editing != 0) {
+                    if (t.isEmpty()) return; draft = "";
+                    Msg tm = msgById(editing); editing = 0;
+                    if (tm != null && !tm.deleted && !t.equals(tm.text)) { tm.text = t; tm.edited = true; save(); }
+                } else if (pendingAttach != null) {
+                    File f = pendingAttach; pendingAttach = null; draft = ""; sendFile(target, t, f);
+                } else {
+                    if (t.isEmpty()) return; draft = ""; sendMsg(target, t);
+                }
+                show("Messages");
+            };
+            in.addActionListener(e -> send.run());
             if (editing != 0) in.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "cancelEdit"); in.getActionMap().put("cancelEdit", new AbstractAction() { public void actionPerformed(ActionEvent e) { cancelEdit(); } });
             SwingUtilities.invokeLater(() -> { in.requestFocusInWindow(); in.setCaretPosition(in.getText().length()); });
             JButton sendB = btn(editing != 0 ? "Save" : "Send", send); sendB.setFont(f(Font.BOLD, 14)); sendB.setBorder(new EmptyBorder(10, 22, 10, 22));
-            JPanel bar = new JPanel(new BorderLayout(10, 0)); bar.setBackground(BG); bar.setBorder(new CompoundBorder(new MatteBorder(CB, 0, 0, 0, divider()), new EmptyBorder(12, 26, 12, 26))); bar.add(in); bar.add(sendB, BorderLayout.EAST);
+            JButton attach = ghost("ATTACH", null); attach.setFont(f(Font.BOLD, 12)); attach.setBorder(new EmptyBorder(10, 14, 10, 14)); attach.setToolTipText("Send a photo, video or file");
+            attach.addActionListener(e -> chooseAttachment(attach));
+            JPanel bar = new JPanel(new BorderLayout(10, 0)); bar.setBackground(BG); bar.setBorder(new CompoundBorder(new MatteBorder(CB, 0, 0, 0, divider()), new EmptyBorder(12, 26, 12, 26)));
+            if (editing == 0) bar.add(attach, BorderLayout.WEST);
+            bar.add(in); bar.add(sendB, BorderLayout.EAST);
             JPanel south = new JPanel(new BorderLayout()); south.setBackground(BG);
+            JPanel extras = new JPanel(new BorderLayout()); extras.setBackground(BG);
             if (editing != 0) {
                 JPanel eb = new JPanel(new BorderLayout(10, 0)); eb.setBackground(YEL); eb.setBorder(new CompoundBorder(new MatteBorder(CB, 0, 0, 0, divider()), new EmptyBorder(8, 26, 8, 26)));
                 String orig = em.text.length() > 60 ? em.text.substring(0, 60) + "..." : em.text;
                 eb.add(lbl("\u270E Editing message: " + orig, Font.BOLD, 12, ONACC)); JButton cx = ghost("Cancel", MessagesScreen::cancelEdit); cx.setFont(f(Font.BOLD, 11)); cx.setBorder(new EmptyBorder(4, 12, 4, 12)); eb.add(cx, BorderLayout.EAST);
-                south.add(eb, BorderLayout.NORTH);
+                extras.add(eb, BorderLayout.NORTH);
             }
+            if (pendingAttach != null) {
+                String kind = ChatAttachments.kind(pendingAttach);
+                JPanel pa = new JPanel(new BorderLayout(10, 0)); pa.setBackground(FIELD);
+                pa.setBorder(new CompoundBorder(new MatteBorder(CB, 0, 0, 0, divider()), new EmptyBorder(8, 26, 8, 26)));
+                JPanel pv = vbox(); put(pv, lbl("ATTACHING " + kind.toUpperCase() + ": " + shortName(pendingAttach.getName(), 44), Font.BOLD, 12, TXT));
+                put(pv, lbl(mb(pendingAttach.length()) + " - press Send when ready", Font.PLAIN, 11, MUTED));
+                JButton rm = ghost("Remove", () -> { pendingAttach = null; show("Messages"); }); rm.setFont(f(Font.BOLD, 11));
+                pa.add(pv); pa.add(rm, BorderLayout.EAST); extras.add(pa, BorderLayout.SOUTH);
+            }
+            if (extras.getComponentCount() > 0) south.add(extras, BorderLayout.NORTH);
             south.add(bar); right.add(south, BorderLayout.SOUTH);
         }
         rt.add(right); return rt;

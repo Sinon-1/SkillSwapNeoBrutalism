@@ -67,7 +67,14 @@ public class ProfileScreen {
         JPanel acts = row(); acts.add(ghost("Sync ratings online", ProfileScreen::sync)); JCheckBox nb = check("Open to impromptu swap now", me.nearby); nb.addActionListener(e -> { me.nearby = nb.isSelected(); save(); }); acts.add(nb); put(p.body, acts); gap(p.body, 8);
         put(p.body, lbl("Recently reviewed", Font.BOLD, 13, MUTED)); gap(p.body, 4); List<Sess> rs = reviews(me);
         if (rs.isEmpty()) put(p.body, lbl("No reviews yet - complete a session to receive feedback.", Font.PLAIN, 12, MUTED));
-        for (int i = rs.size() - 1; i >= 0; i--) { Sess s = rs.get(i); JPanel c = card(); c.add(avatarWrap(name(s.learner), 32), BorderLayout.WEST); JPanel iv = vbox(); put(iv, lbl(name(s.learner), Font.BOLD, 12, TXT)); put(iv, lbl(s.skill + (s.review.isEmpty() ? "" : " - " + s.review), Font.PLAIN, 12, MUTED)); c.add(iv); c.add(lbl(stars(s.rating), Font.PLAIN, 12, GOLD), BorderLayout.EAST); put(p.body, c); gap(p.body, 5); }
+        for (int i = rs.size() - 1; i >= 0; i--) {
+            Sess s = rs.get(i); JPanel c = card(); c.add(avatarWrap(name(s.learner), 32), BorderLayout.WEST);
+            JPanel iv = vbox(); put(iv, lbl(name(s.learner), Font.BOLD, 12, TXT));
+            put(iv, lbl(s.skill + (s.review.isEmpty() ? "" : " - " + s.review), Font.PLAIN, 12, MUTED)); c.add(iv);
+            JPanel rt = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 8)); rt.setOpaque(false);
+            rt.add(new StarRating(15, true).value(s.rating)); rt.add(lbl(String.format("%.1f", (double) s.rating), Font.BOLD, 11, GOLD));
+            c.add(rt, BorderLayout.EAST); put(p.body, c); gap(p.body, 5);
+        }
         return p.root;
     }
     public static JComponent skillRow(String title, List<String> list, Color col) {

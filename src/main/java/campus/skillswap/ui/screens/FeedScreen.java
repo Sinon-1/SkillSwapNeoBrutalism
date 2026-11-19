@@ -99,7 +99,10 @@ public class FeedScreen {
         like.setForeground(po.likes.contains(me.username) ? PINKT : TXT); foot.add(like); foot.add(lbl(ago(po.time), Font.PLAIN, 11, MUTED)); put(inf, foot);
         c.add(inf, BorderLayout.CENTER);
         JPanel ea = vbox(); ea.setPreferredSize(new Dimension(232, 96));
-        if (a != null && a.publicRatings && !reviews(a).isEmpty()) put(ea, lbl("\u2605 " + String.format("%.1f", avg(a)) + " rating", Font.BOLD, 11, GOLD)); gap(ea, 6);
+        if (a != null && a.publicRatings && !reviews(a).isEmpty()) {
+            JPanel rr = row(); rr.add(new StarRating(13, true).value(avg(a)));
+            rr.add(lbl(String.format("%.1f", avg(a)) + " rating", Font.BOLD, 11, GOLD)); put(ea, rr); gap(ea, 6);
+        }
         if (mine) put(ea, wide(ghost("Delete", () -> { S.posts.remove(po); save(); show("Feed"); })));
         else {
             put(ea, wide(btn(offer ? "BOOK SESSION" : "OFFER TO TEACH", () -> { if (offer) book(po.author, me.username, po.skill); else book(me.username, po.author, po.skill); }))); gap(ea, 6);

@@ -29,7 +29,7 @@ import static campus.skillswap.ui.media.Videos.*;
  */
 public class LanSync {
     public static final int DEFAULT_PORT = 5577;
-    static final long MAX_VID = 70L * 1024 * 1024;
+    static final long MAX_VID = 70L * 1024 * 1024, MAX_MSG_FILE = 70L * 1024 * 1024;
     public static volatile String mode = "off";                    // "off" | "host" | "client"
     public static String address = "", code = "", peerHost = ""; public static int peerPort;
     static ServerSocket server; static Socket csock; static DataOutputStream cout;
@@ -37,7 +37,7 @@ public class LanSync {
     static final ExecutorService NET = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "lan-net"); t.setDaemon(true); return t; });
     static final List<Delta> pending = new ArrayList<>();            // received changes waiting for a quiet moment (EDT only)
     static javax.swing.Timer flusher;
-    static final Path VID = DIR.resolve("lan-videos"), DATA = DIR.resolve("lan-data.bin");
+    static final Path VID = DIR.resolve("lan-videos"), MSGFILES = DIR.resolve("lan-message-files"), DATA = DIR.resolve("lan-data.bin");
 
     /** The changed rows of one save. */
     public static class Delta implements Serializable {
@@ -110,6 +110,15 @@ public class LanSync {
                 Files.move(tmp, VID.resolve(id + ".bin"), StandardCopyOption.REPLACE_EXISTING); out.writeInt(1); out.flush();
             } else if (kind == 'G') {
                 int id = in.readInt(); Path p = VID.resolve(id + ".bin");
+                if (!Files.exists(p)) out.writeLong(-1); else { out.writeLong(Files.size(p)); Files.copy(p, out); }
+                out.flush();
+            } else if (kind == 'M') {
+                int id = in.readInt(); long len = in.readLong(); if (len < 0 || len > MAX_MSG_FILE) throw new IOException("File too large");
+                c.setSoTimeout(0); Files.createDirectories(MSGFILES); Path tmp = MSGFILES.resolve(id + "." + System.nanoTime() + ".part");
+                try (OutputStream o = Files.newOutputStream(tmp)) { copyN(in, o, len); } catch (IOException ex) { Files.deleteIfExists(tmp); throw ex; }
+                Files.move(tmp, MSGFILES.resolve(id + ".bin"), StandardCopyOption.REPLACE_EXISTING); out.writeInt(1); out.flush();
+            } else if (kind == 'N') {
+                int id = in.readInt(); Path p = MSGFILES.resolve(id + ".bin");
                 if (!Files.exists(p)) out.writeLong(-1); else { out.writeLong(Files.size(p)); Files.copy(p, out); }
                 out.flush();
             }
@@ -256,6 +265,27 @@ public class LanSync {
             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(s.getOutputStream())); DataInputStream in = new DataInputStream(new BufferedInputStream(s.getInputStream()));
             out.write('G'); out.writeUTF(code); out.writeInt(postId); out.flush();
             long n = in.readLong(); if (n < 0) throw new IOException("Video not found on the host");
+            try (OutputStream o = Files.newOutputStream(dest)) { copyN(in, o, n); }
+        }
+    }
+
+    public static void putMessageFile(int messageId, File f) throws IOException {
+        if (mode.equals("host")) { Files.createDirectories(MSGFILES); Path t = MSGFILES.resolve(messageId + "." + System.nanoTime() + ".part"); Files.copy(f.toPath(), t); Files.move(t, MSGFILES.resolve(messageId + ".bin"), StandardCopyOption.REPLACE_EXISTING); return; }
+        try (Socket s = new Socket()) {
+            s.connect(new InetSocketAddress(peerHost, peerPort), 4000); s.setSoTimeout(60000);
+            DataOutputStream out = new DataOutputStream(new BufferedOutputStream(s.getOutputStream())); DataInputStream in = new DataInputStream(s.getInputStream());
+            out.write('M'); out.writeUTF(code); out.writeInt(messageId); out.writeLong(f.length()); Files.copy(f.toPath(), out); out.flush();
+            if (in.readInt() != 1) throw new IOException("Host refused the file");
+        }
+    }
+
+    public static void getMessageFile(int messageId, Path dest) throws IOException {
+        if (mode.equals("host")) { Path p = MSGFILES.resolve(messageId + ".bin"); if (!Files.exists(p)) throw new IOException("File not found on the host"); Files.copy(p, dest, StandardCopyOption.REPLACE_EXISTING); return; }
+        try (Socket s = new Socket()) {
+            s.connect(new InetSocketAddress(peerHost, peerPort), 4000); s.setSoTimeout(60000);
+            DataOutputStream out = new DataOutputStream(new BufferedOutputStream(s.getOutputStream())); DataInputStream in = new DataInputStream(new BufferedInputStream(s.getInputStream()));
+            out.write('N'); out.writeUTF(code); out.writeInt(messageId); out.flush();
+            long n = in.readLong(); if (n < 0) throw new IOException("File not found on the host");
             try (OutputStream o = Files.newOutputStream(dest)) { copyN(in, o, n); }
         }
     }

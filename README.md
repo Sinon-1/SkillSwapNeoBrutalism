@@ -25,6 +25,7 @@ Call history ("Video call (2:31)", "Missed video call") is added to the chat.
 * **Picture and sound** go straight from computer to computer over TCP, so both computers must be on the same network
   (campus Wi-Fi/LAN) and the firewall must allow SkillSwap the first time it asks.
 * **Sound** uses plain Java Sound (no install). **Camera** uses ffmpeg: run `scripts/get-ffmpeg` once. Without ffmpeg or a camera the call still works as a voice call.
+* **Screen sharing** - press **SHARE SCREEN** during a 1-to-1 or group video call to share your primary display. Your camera pauses while the screen is shared; the other people see your screen in the main call area (group calls keep the camera tiles below it). Press **STOP SHARE** to stop sharing, then **CAMERA ON** if you want your camera back.
 * Use headphones on laptops, otherwise the speakers echo into the microphone.
 
 ## Group chat, group calls, emotes and raise hand
@@ -34,6 +35,9 @@ Call history ("Video call (2:31)", "Missed video call") is added to the chat.
   ("Ana created the group", "Group video call ended (12:30)") appear as green tags. **Members** lets anyone add people or leave;
   the creator can also rename the group and remove people. Group messages are normal rows in `messages` with `to_user = 'g:<id>'`;
   the groups themselves are in `chat_groups` / `chat_group_members` (created automatically).
+* **Photos, videos and files** - in any direct or group chat press **ATTACH** and choose **Photo**, **Video** or **File** (up to 60 MB).
+  Photos show a preview in the chat, videos play inside the app, and any file can be opened or saved. Attachment details are stored in `messages`
+  and the bytes in `message_files`; LAN mode stores them on the host. You can add a caption before pressing **Send**.
 * **Group video call** - press **Group call** in a group chat (up to 6 people, online members only). If nobody is in the call yet, the other
   online members get a ringing window with **Join call**; if a call is already running you simply join it, like in Messenger: the group chat shows a yellow **Call in progress (3 of 6): Ana, Ben** strip with a **Join** button, the header button turns into **Join call**,
   and the chat list tags the group "IN A CALL". Joining a running call never rings anybody; when you are in it the button turns into **Back to call**. A full call (6 people) shows **Call is full**.
@@ -65,7 +69,7 @@ Existing databases get the `campusmod` account and the extra moderation columns 
 ```
 skillswap/
 ├── pom.xml                         Maven build (PostgreSQL driver, optional JavaFX video, runnable jar)
-├── database/schema.sql             Tables (incl. chat_groups, chat_group_members) (the app also creates them automatically on first connect)
+├── database/schema.sql             Tables (incl. chat_groups, message_files) (the app also creates them automatically on first connect)
 ├── lib/postgresql-42.7.4.jar       JDBC driver for building without Maven
 ├── scripts/                        run-dev, package (installer), build-no-maven  (.sh and .bat)
 ├── .env.example  .gitignore

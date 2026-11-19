@@ -48,7 +48,7 @@ public class GroupCalls {
     static boolean active, starter, ringSent, sawEstablished, everHadPeers, camOn, muted, handUp, joinedLive, heardAny;
     static int beatTick;
     static Group group; static String ticket, ip; static int port; static long startedAt;
-    static ServerSocket ss; static GroupCallWindow win; static Tile mine; static Camera cam; static Audio audio;
+    static ServerSocket ss; static GroupCallWindow win; static Tile mine; static Camera cam; static ScreenCapture screen; static Audio audio;
     static final Map<String, Peer> peers = new LinkedHashMap<>();
     static final Set<String> connecting = new HashSet<>();
     static final List<CallLink> links = new CopyOnWriteArrayList<>();      // read by the camera / microphone threads
@@ -257,10 +257,13 @@ public class GroupCalls {
         l.onAudio = b -> { Audio a = audio; if (a != null) a.play(user, b); if (Audio.rms(b) > 700) t.speakUntil = System.currentTimeMillis() + 500; };
         l.onCam = on -> { t.cam = on; GroupCallWindow w = win; if (w != null) w.repaintStage(); };
         l.onMic = on -> { t.mic = on; GroupCallWindow w = win; if (w != null) w.repaintStage(); };
+        l.onScreen = jpeg -> { BufferedImage im = Calls.decode(jpeg); if (im != null) { t.screen = im; t.sharing = true; GroupCallWindow w = win; if (w != null) w.repaintStage(); } };
+        l.onScreenOff = () -> { t.screen = null; t.sharing = false; GroupCallWindow w = win; if (w != null) w.repaintStage(); };
         l.onEmote = key -> SwingUtilities.invokeLater(() -> { if (win != null && active && peers.get(user) == p) win.addEmote(user, key); });
         l.onHand = up -> SwingUtilities.invokeLater(() -> { if (win != null && active && peers.get(user) == p) win.setHand(user, up); });
         l.onClose = () -> SwingUtilities.invokeLater(() -> removePeer(user, l));
         peers.put(user, p); links.add(l); everHadPeers = true; win.addTile(t); l.start();
+        if (mine != null && mine.sharing) l.beginScreen();
         l.sendCam(camOn); l.sendMic(!muted); if (handUp) l.sendHand(true);                            // tell the newcomer our current state
         win.flash(name(user) + " joined"); updateStatus(); liveChanged();
     }
@@ -278,6 +281,32 @@ public class GroupCalls {
                 win.setNotice("Camera: " + err + "  (log: " + Camera.logFile() + ")"); win.setLocalCam(false); for (CallLink l : links) l.sendCam(false); } }));
     }
     static void stopCamera() { if (cam != null) { cam.stop(); cam = null; } }
+    static void startScreen() {
+        if (!active || mine == null) return;
+        stopScreen(); stopCamera(); camOn = false; mine.cam = false; mine.img = null; mine.sharing = true; mine.screen = null;
+        for (CallLink l : links) l.sendCam(false);
+        if (win != null) { win.setLocalCam(false); win.setLocalSharing(true); win.setNotice(""); }
+        for (CallLink l : links) l.beginScreen();
+        final ScreenCapture sc = new ScreenCapture(); screen = sc;
+        sc.start(jpeg -> {
+            if (screen != sc || !active) return;
+            for (CallLink l : links) l.sendScreen(jpeg);
+            BufferedImage im = Calls.decode(jpeg); if (im != null) { mine.screen = im; GroupCallWindow w = win; if (w != null) w.repaintStage(); }
+        }, err -> SwingUtilities.invokeLater(() -> {
+            if (screen == sc && active) {
+                screen = null; mine.sharing = false; mine.screen = null; for (CallLink l : links) l.sendScreenOff();
+                if (win != null) { win.setLocalSharing(false); win.setNotice("Screen share: " + err); }
+                toast("Screen sharing could not start");
+            }
+        }));
+    }
+    static void stopScreen() {
+        if (screen == null) return;
+        screen.stop(); screen = null;
+        if (mine != null) { mine.sharing = false; mine.screen = null; }
+        for (CallLink l : links) l.sendScreenOff();
+        if (win != null) { win.setLocalSharing(false); win.repaintStage(); }
+    }
 
     static final GroupCallWindow.Actions ACTIONS = new GroupCallWindow.Actions() {
         public void accept() { }
@@ -286,9 +315,10 @@ public class GroupCalls {
         public void mute(boolean on) { muted = on; if (mine != null) mine.mic = !on; for (CallLink l : links) l.sendMic(!on); }
         public void camera(boolean on) {
             if (!active) return;
-            if (on) startCamera(); else { stopCamera(); camOn = false; mine.cam = false; mine.img = null; for (CallLink l : links) l.sendCam(false); }
+            if (on) { stopScreen(); startCamera(); } else { stopCamera(); camOn = false; mine.cam = false; mine.img = null; for (CallLink l : links) l.sendCam(false); }
             win.setLocalCam(on);
         }
+        public void screen(boolean on) { if (!active) return; if (on) startScreen(); else stopScreen(); }
         public void emote(String key) { if (CallFx.valid(key)) for (CallLink l : links) l.sendEmote(key); }
         public void hand(boolean up) { handUp = up; for (CallLink l : links) l.sendHand(up); }
     };
@@ -297,6 +327,7 @@ public class GroupCalls {
     public static void leave() {
         if (!active) return;
         final Group g = group; final boolean alone = peers.isEmpty(), had = everHadPeers, rang = ringSent; final long secs = (System.currentTimeMillis() - startedAt) / 1000;
+        stopScreen();
         if (alone && rang) for (String u : online(g)) Calls.sendSig("GEND", u, myCallId(), ip, port, false);   // stop the ringing of people who did not join
         for (String u : online(g)) Calls.sendSig("GLEAVE", u, myCallId(), "", 0, false);                  // clears my name from their "Call in progress" banner at once
         final Set<String> stillIn = new HashSet<>(peers.keySet());
@@ -342,6 +373,6 @@ public class GroupCalls {
         public void accept() { Group g = ringGroup; if (g == null) return; closeRing(null); if (active || Calls.inCall()) { toast("You are already in a call"); return; } join(g, false); }
         public void decline() { closeRing(null); }
         public void leave() { closeRing(null); }
-        public void mute(boolean on) { } public void camera(boolean on) { } public void emote(String key) { } public void hand(boolean up) { }
+        public void mute(boolean on) { } public void camera(boolean on) { } public void screen(boolean on) { } public void emote(String key) { } public void hand(boolean up) { }
     };
 }

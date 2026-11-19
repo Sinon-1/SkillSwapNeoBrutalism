@@ -32,7 +32,7 @@ public class Calls {
     static String callId, peer, remoteHost; static int remotePort;
     static boolean outgoing, video, camOn, muted;
     static long startedAt;
-    static ServerSocket ss; static CallLink link; static CallWindow win; static Camera cam; static Audio audio;
+    static ServerSocket ss; static CallLink link; static CallWindow win; static Camera cam; static ScreenCapture screen; static Audio audio;
     static javax.swing.Timer ringTimer, tickTimer, beepTimer;
 
     public static boolean inCall() { return state != 0 || GroupCalls.active(); }
@@ -106,7 +106,8 @@ public class Calls {
         public void mute(boolean on) { muted = on; }
         public void emote(String key) { if (state == 3 && link != null) link.sendEmote(key); }
         public void hand(boolean up) { if (state == 3 && link != null) link.sendHand(up); }
-        public void camera(boolean on) { if (state != 3) return; if (on) startCamera(link); else { stopCamera(); if (link != null) link.sendCam(false); } camOn = on; win.setLocalCam(on); }
+        public void camera(boolean on) { if (state != 3) return; if (on) { stopScreen(); startCamera(link); } else { stopCamera(); if (link != null) link.sendCam(false); } camOn = on; win.setLocalCam(on); }
+        public void screen(boolean on) { if (state != 3) return; if (on) startScreen(link); else stopScreen(); }
     };
 
     // ---------------------------------------------------------------- the connected call
@@ -118,6 +119,8 @@ public class Calls {
         l.onVideo = jpeg -> { BufferedImage im = decode(jpeg); CallWindow w = win; if (im != null && w != null) w.setRemote(im); };
         l.onAudio = b -> { Audio a = audio; if (a != null) a.play(b); };
         l.onCam = on -> { CallWindow w = win; if (w != null) w.setRemoteCam(on); };
+        l.onScreen = jpeg -> { BufferedImage im = decode(jpeg); CallWindow w = win; if (im != null && w != null) w.setRemoteScreen(im); };
+        l.onScreenOff = () -> { CallWindow w = win; if (w != null) w.stopRemoteScreen(); };
         l.onEmote = key -> SwingUtilities.invokeLater(() -> { CallWindow w = win; if (w != null && state == 3) w.showEmote(key, false); });
         l.onHand = up -> SwingUtilities.invokeLater(() -> { CallWindow w = win; if (w != null && state == 3) w.setRemoteHand(up); });
         l.onClose = () -> SwingUtilities.invokeLater(() -> { if (link == l && state == 3) endActive("Call ended"); });
@@ -133,6 +136,27 @@ public class Calls {
             err -> SwingUtilities.invokeLater(() -> { if (cam == cm && state == 3) { camOn = false; toast("Camera problem - details are shown in the call window"); win.setNotice("Camera: " + err + "  (log: " + Camera.logFile() + ")"); win.setLocalCam(false); l.sendCam(false); } }));
     }
     static void stopCamera() { if (cam != null) { cam.stop(); cam = null; } }
+    static void startScreen(CallLink l) {
+        if (l == null) return;
+        if (screen != null) stopScreen();
+        stopCamera(); camOn = false; l.sendCam(false);
+        if (win != null) { win.setLocalCam(false); win.setLocalSharing(true); win.setNotice(""); }
+        l.beginScreen();
+        final ScreenCapture sc = new ScreenCapture(); screen = sc;
+        sc.start(jpeg -> { if (screen != sc) return; l.sendScreen(jpeg); BufferedImage im = decode(jpeg); CallWindow w = win; if (im != null && w != null) w.setLocalScreen(im); },
+            err -> SwingUtilities.invokeLater(() -> {
+                if (screen == sc && state == 3) {
+                    screen = null; if (link != null) link.sendScreenOff(); if (win != null) { win.setLocalSharing(false); win.setNotice("Screen share: " + err); }
+                    toast("Screen sharing could not start");
+                }
+            }));
+    }
+    static void stopScreen() {
+        if (screen == null) return;
+        screen.stop(); screen = null;
+        if (link != null) link.sendScreenOff();
+        if (win != null) win.setLocalSharing(false);
+    }
     static BufferedImage decode(byte[] jpeg) { try { return ImageIO.read(new ByteArrayInputStream(jpeg)); } catch (IOException e) { return null; } }
     static String dur(long s) { return String.format(s >= 3600 ? "%d:%02d:%02d" : "%2$d:%3$02d", s / 3600, (s / 60) % 60, s % 60).trim(); }
 
@@ -145,7 +169,7 @@ public class Calls {
     static void endSession(String windowMsg, String chatLine) {
         if (state == 0) return;
         final String who = peer; final boolean wasCaller = outgoing; CallWindow w = win;
-        state = 0; stopTimers(); stopCamera(); closeServer();
+        state = 0; stopTimers(); stopScreen(); stopCamera(); closeServer();
         if (audio != null) { audio.stop(); audio = null; }
         if (link != null) { CallLink l = link; link = null; l.close(); }
         win = null; callId = null;

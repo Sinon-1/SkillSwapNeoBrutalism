@@ -154,6 +154,92 @@ public class Theme {
     public static JButton wide(JButton b) { b.setMaximumSize(new Dimension(Integer.MAX_VALUE, b.getPreferredSize().height)); return b; }
     public static JButton chip(String t, boolean on, Runnable r) { JButton b = ghost(t, r); if (on) { b.setBackground(YEL); b.setForeground(ONACC); } return b; }
 
+    // ---------------- stars / rating ----------------
+    /**
+     * Chunky neobrutalist stars: bright gold fill, thick ink outline and a hard offset shadow.
+     * Editable stars preview on hover and call {@link #onChange} when clicked; read-only stars
+     * also support a fractional average (4.3 shows 4 full stars and 30% of the fifth).
+     */
+    public static class StarRating extends JComponent {
+        final int max = 5, size, gap;
+        boolean readOnly;
+        double value;
+        int hover;
+        java.util.function.Consumer<Integer> onChange;
+
+        public StarRating(int size, boolean readOnly) {
+            this.size = size; this.readOnly = readOnly; this.gap = Math.max(3, size / 6);
+            Dimension d = new Dimension(max * size + (max - 1) * gap + 5, size + 6);
+            setPreferredSize(d); setMinimumSize(d); setMaximumSize(d);
+            setCursor(Cursor.getPredefinedCursor(readOnly ? Cursor.DEFAULT_CURSOR : Cursor.HAND_CURSOR));
+            setToolTipText(readOnly ? null : "Click a star to rate");
+            if (!readOnly) {
+                addMouseListener(new MouseAdapter() {
+                    public void mouseExited(MouseEvent e) { hover = 0; repaint(); }
+                    public void mouseClicked(MouseEvent e) {
+                        value = starAt(e.getX()); hover = 0; repaint();
+                        if (onChange != null) onChange.accept((int) value);
+                    }
+                });
+                addMouseMotionListener(new MouseMotionAdapter() {
+                    public void mouseMoved(MouseEvent e) { int h = starAt(e.getX()); if (h != hover) { hover = h; repaint(); } }
+                });
+            }
+        }
+
+        public StarRating value(double v) { value = Math.max(0, Math.min(max, v)); repaint(); return this; }
+        public StarRating onChange(java.util.function.Consumer<Integer> c) { onChange = c; return this; }
+        public int rating() { return (int) Math.round(value); }
+        int starAt(int x) { return Math.max(1, Math.min(max, (x - 2) / (size + gap) + 1)); }
+
+        static java.awt.Shape star(int x, int y, int s) {
+            java.awt.geom.Path2D.Double p = new java.awt.geom.Path2D.Double();
+            double cx = x + s / 2.0, cy = y + s / 2.0, outer = s / 2.0, inner = outer * 0.45;
+            for (int k = 0; k < 10; k++) {
+                double a = -Math.PI / 2 + k * Math.PI / 5, r = k % 2 == 0 ? outer : inner;
+                double px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r;
+                if (k == 0) p.moveTo(px, py); else p.lineTo(px, py);
+            }
+            p.closePath(); return p;
+        }
+
+        protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create(); aa(g);
+            double shown = hover > 0 ? hover : value;
+            for (int i = 0; i < max; i++) {
+                int x = 2 + i * (size + gap), y = 2;
+                java.awt.Shape st = star(x, y, size);
+                g.setColor(INK); g.fill(star(x + 2, y + 2, size));          // hard shadow
+                g.setColor(FIELD); g.fill(st);                              // empty star
+                double part = Math.max(0, Math.min(1, shown - i));
+                if (part > 0) {
+                    java.awt.Shape old = g.getClip(); g.clip(st);
+                    g.setColor(pastel(YEL)); g.fill(st);
+                    g.setColor(YEL); g.fillRect(x, y, (int) Math.round(size * part) + 1, size);
+                    g.setClip(old);
+                }
+                g.setColor(INK); g.setStroke(new BasicStroke(Math.max(2f, size / 12f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                g.draw(st);
+            }
+            g.dispose();
+        }
+    }
+
+    /** One chunky star, for compact rating labels where a full five-star row would be too wide. */
+    public static JComponent starIcon(int size) {
+        return new JComponent() {
+            { Dimension d = new Dimension(size + 4, size + 4); setPreferredSize(d); setMinimumSize(d); setMaximumSize(d); }
+            protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create(); aa(g);
+                java.awt.Shape st = StarRating.star(1, 1, size);
+                g.setColor(INK); g.fill(StarRating.star(3, 3, size));
+                g.setColor(YEL); g.fill(st);
+                g.setColor(INK); g.setStroke(new BasicStroke(Math.max(2f, size / 10f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)); g.draw(st);
+                g.dispose();
+            }
+        };
+    }
+
     // ---------------- tags, cards, avatars ----------------
     public static JLabel tag(String t, Color c) {
         JLabel l = lbl(t, Font.BOLD, 10, ONACC); l.setOpaque(true); l.setBackground(pastel(c));

@@ -86,6 +86,11 @@ public class Database {
         "ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE messages ADD COLUMN IF NOT EXISTS hidden_by TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_name TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_kind TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_mime TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_size BIGINT NOT NULL DEFAULT 0",
+        "CREATE TABLE IF NOT EXISTS message_files(message_id INT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE, data BYTEA NOT NULL)",
         "CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(from_user, to_user, created)",
         "CREATE TABLE IF NOT EXISTS reports(id INT PRIMARY KEY, by_user TEXT NOT NULL, target TEXT NOT NULL, reason TEXT NOT NULL,"
             + " details TEXT NOT NULL DEFAULT '', created BIGINT NOT NULL)",
@@ -143,8 +148,9 @@ public class Database {
                 try (ResultSet r = s.executeQuery("SELECT id,teacher,learner,skill,sess_mode,status,requester,review,rating,starts_at,video_call FROM sessions ORDER BY id")) {
                     while (r.next()) { Sess x = new Sess(); x.id = r.getInt(1); x.teacher = r.getString(2); x.learner = r.getString(3); x.skill = r.getString(4); x.mode = r.getString(5); x.status = r.getString(6);
                         x.requester = r.getString(7); x.review = nz(r.getString(8)); x.rating = r.getInt(9); x.at = r.getTimestamp(10).toLocalDateTime(); x.videoCall = r.getBoolean(11); st.sessions.add(x); } }
-                try (ResultSet r = s.executeQuery("SELECT id,from_user,to_user,body,created,edited,deleted,hidden_by FROM messages ORDER BY created,id")) {
-                    while (r.next()) { Msg m = new Msg(); m.id = r.getInt(1); m.from = r.getString(2); m.to = r.getString(3); m.text = r.getString(4); m.time = r.getLong(5); m.edited = r.getBoolean(6); m.deleted = r.getBoolean(7); m.hiddenBy = nz(r.getString(8)); st.msgs.add(m); } }
+                try (ResultSet r = s.executeQuery("SELECT id,from_user,to_user,body,created,edited,deleted,hidden_by,file_name,file_kind,file_mime,file_size FROM messages ORDER BY created,id")) {
+                    while (r.next()) { Msg m = new Msg(); m.id = r.getInt(1); m.from = r.getString(2); m.to = r.getString(3); m.text = r.getString(4); m.time = r.getLong(5); m.edited = r.getBoolean(6); m.deleted = r.getBoolean(7); m.hiddenBy = nz(r.getString(8));
+                        m.fileName = nz(r.getString(9)); m.fileKind = nz(r.getString(10)); m.fileMime = nz(r.getString(11)); m.fileSize = r.getLong(12); st.msgs.add(m); } }
                 try (ResultSet r = s.executeQuery("SELECT id,name,creator,created FROM chat_groups ORDER BY id")) {
                     while (r.next()) { Group g = new Group(); g.id = r.getInt(1); g.name = nz(r.getString(2)); g.creator = nz(r.getString(3)); g.created = r.getLong(4); st.groups.add(g); } }
                 Map<Integer, Group> gm = new HashMap<>(); for (Group g : st.groups) gm.put(g.id, g);
@@ -164,7 +170,7 @@ public class Database {
         for (User u : st.users.values()) m.put("u:" + u.username, j(nz(u.realName), u.email, u.passHash, nz(u.bio), u.useRealName, u.publicRatings, u.nearby, u.demo, u.credits, u.photo == null ? 0 : Arrays.hashCode(u.photo), String.join("\u0002", u.teach), String.join("\u0002", u.learn), u.moderator, u.banned, nz(u.banReason), nz(u.bannedBy), u.bannedAt));
         for (Post p : st.posts) m.put("p:" + p.id, pfp(p));
         for (Sess s : st.sessions) m.put("s:" + s.id, j(s.teacher, s.learner, s.skill, s.mode, s.status, s.requester, nz(s.review), s.rating, s.at.truncatedTo(ChronoUnit.SECONDS), s.videoCall));
-        for (Msg x : st.msgs) m.put("m:" + x.id, j(x.text, x.edited, x.deleted, nz(x.hiddenBy)));
+        for (Msg x : st.msgs) m.put("m:" + x.id, j(x.text, x.edited, x.deleted, nz(x.hiddenBy), nz(x.fileName), nz(x.fileKind), nz(x.fileMime), x.fileSize));
         for (Report x : st.reports) m.put("r:" + x.id, j(x.by, x.target, x.reason, nz(x.details), x.time, x.resolved, nz(x.resolvedBy), x.resolvedAt));
         for (Group g : st.groups) m.put("g:" + g.id, j(g.name, g.creator, String.join("\u0002", g.members)));
         m.put("meta:sync", st.lastSync);
@@ -228,10 +234,10 @@ public class Database {
         }
     }
     public static void writeMsg(Msg m) throws SQLException {
-        try (PreparedStatement p = db.prepareStatement("INSERT INTO messages(id,from_user,to_user,body,created,edited,deleted,hidden_by) VALUES(?,?,?,?,?,?,?,?) "
-                + "ON CONFLICT(id) DO UPDATE SET body=EXCLUDED.body,edited=EXCLUDED.edited,deleted=EXCLUDED.deleted,hidden_by=EXCLUDED.hidden_by")) {
+        try (PreparedStatement p = db.prepareStatement("INSERT INTO messages(id,from_user,to_user,body,created,edited,deleted,hidden_by,file_name,file_kind,file_mime,file_size) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
+                + "ON CONFLICT(id) DO UPDATE SET body=EXCLUDED.body,edited=EXCLUDED.edited,deleted=EXCLUDED.deleted,hidden_by=EXCLUDED.hidden_by,file_name=EXCLUDED.file_name,file_kind=EXCLUDED.file_kind,file_mime=EXCLUDED.file_mime,file_size=EXCLUDED.file_size")) {
             p.setInt(1, m.id); p.setString(2, m.from); p.setString(3, m.to); p.setString(4, nz(m.text)); p.setLong(5, m.time);
-            p.setBoolean(6, m.edited); p.setBoolean(7, m.deleted); p.setString(8, nz(m.hiddenBy)); p.executeUpdate();
+            p.setBoolean(6, m.edited); p.setBoolean(7, m.deleted); p.setString(8, nz(m.hiddenBy)); p.setString(9, nz(m.fileName)); p.setString(10, nz(m.fileKind)); p.setString(11, nz(m.fileMime)); p.setLong(12, m.fileSize); p.executeUpdate();
         }
     }
     public static void writeGroup(Group g) throws SQLException {

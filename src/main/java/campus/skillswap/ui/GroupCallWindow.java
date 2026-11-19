@@ -16,13 +16,13 @@ import static campus.skillswap.ui.Theme.*;
  * Not modal. Everything here runs on the Swing thread; {@link Tile} fields are volatile because network threads update them.
  */
 public class GroupCallWindow extends JFrame {
-    public interface Actions { void accept(); void decline(); void leave(); void mute(boolean on); void camera(boolean on); void emote(String key); void hand(boolean up); }
+    public interface Actions { void accept(); void decline(); void leave(); void mute(boolean on); void camera(boolean on); void screen(boolean on); void emote(String key); void hand(boolean up); }
     public enum Mode { RINGING, ACTIVE, ENDED }
 
     /** One person in the call. */
     public static class Tile {
         public final String user, name; public final boolean me;
-        public volatile BufferedImage img; public volatile boolean cam = true, mic = true; public volatile long speakUntil;
+        public volatile BufferedImage img, screen; public volatile boolean cam = true, mic = true, sharing; public volatile long speakUntil;
         public Tile(String user, String name, boolean me) { this.user = user; this.name = name; this.me = me; }
     }
 
@@ -33,7 +33,7 @@ public class GroupCallWindow extends JFrame {
     final CallFx.Layer fx = new CallFx.Layer();
     final Map<String, Rectangle> rects = new HashMap<>();                // where each picture was drawn last time (for emote start points)
     volatile String status = "", notice = "", flash = ""; volatile long flashUntil;
-    Mode mode = Mode.ACTIVE; boolean muted, camOn = true, handUp;
+    Mode mode = Mode.ACTIVE; boolean muted, camOn = true, handUp, localSharing;
     final JPanel stage, bar = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 12)); final javax.swing.Timer timer;
 
     public GroupCallWindow(Group g, String meUser, Actions act) {
@@ -65,6 +65,7 @@ public class GroupCallWindow extends JFrame {
     /** An emote from another person. */
     public void addEmote(String user, String key) { if (CallFx.valid(key) && fx.add(key, user)) stage.repaint(); }
     public void setLocalCam(boolean on) { camOn = on; buildBar(); stage.repaint(); }
+    public void setLocalSharing(boolean on) { localSharing = on; buildBar(); stage.repaint(); }
     public void ended(String msg) {
         mode = Mode.ENDED; status = msg; setAlwaysOnTop(false); buildBar(); stage.repaint();
         javax.swing.Timer t = new javax.swing.Timer(2500, e -> dispose()); t.setRepeats(false); t.start();
@@ -82,6 +83,7 @@ public class GroupCallWindow extends JFrame {
             case ACTIVE: {
                 bar.add(cbtn(muted ? "UNMUTE" : "MUTE", muted ? YEL : FIELD, muted ? ONACC : TXT, () -> { muted = !muted; act.mute(muted); buildBar(); }));
                 bar.add(cbtn(camOn ? "CAMERA OFF" : "CAMERA ON", camOn ? FIELD : YEL, camOn ? TXT : ONACC, () -> act.camera(!camOn)));
+                bar.add(cbtn(localSharing ? "STOP SHARE" : "SHARE SCREEN", localSharing ? YEL : FIELD, localSharing ? ONACC : TXT, () -> act.screen(!localSharing)));
                 JButton em = cbtn("EMOTES", FIELD, TXT, null); em.setIcon(CallFx.icon("LAUGH", 22)); em.setIconTextGap(8); em.addActionListener(e -> CallFx.showPalette(em, this::pickEmote)); bar.add(em);
                 JButton hd = cbtn(handUp ? "LOWER HAND" : "RAISE HAND", handUp ? YEL : FIELD, handUp ? ONACC : TXT, () -> { handUp = !handUp; setHand(meUser, handUp); act.hand(handUp); buildBar(); });
                 hd.setIcon(CallFx.handIcon(22)); hd.setIconTextGap(8); bar.add(hd);
@@ -131,6 +133,8 @@ public class GroupCallWindow extends JFrame {
 
     void paintTiles(Graphics2D g, int w, int h) {
         int n = tiles.size(); if (n == 0) return;
+        Tile shared = null; for (Tile t : tiles) if (t.sharing) { shared = t; break; }
+        if (shared != null) { paintSpotlight(g, shared, w, h); return; }
         int top = 88, gap = 12, cols = n <= 1 ? 1 : n <= 4 ? 2 : 3, rows = (n + cols - 1) / cols, aw = w - 32, ah = h - top - 16;
         int tw = (aw - gap * (cols - 1)) / cols, th = (ah - gap * (rows - 1)) / rows;
         if (tw * 3 > th * 4) tw = th * 4 / 3; else th = tw * 3 / 4;                       // 4:3 pictures
@@ -140,6 +144,30 @@ public class GroupCallWindow extends JFrame {
             for (int c = 0; c < inRow; c++, i++) { paintTile(g, tiles.get(i), x, y, tw, th); x += tw + gap; }
             y += th + gap;
         }
+    }
+    void paintSpotlight(Graphics2D g, Tile shared, int w, int h) {
+        int top = 88, gap = 12, n = tiles.size();
+        int strip = Math.min(132, Math.max(96, h / 5)), areaH = Math.max(140, h - top - strip - 24);
+        Rectangle area = new Rectangle(16, top, w - 32, areaH);
+        g.setColor(Color.BLACK); g.fillRect(area.x, area.y, area.width, area.height);
+        BufferedImage sc = shared.screen;
+        if (sc != null) {
+            double s = Math.min((double) area.width / sc.getWidth(), (double) area.height / sc.getHeight());
+            int iw = (int) (sc.getWidth() * s), ih = (int) (sc.getHeight() * s);
+            g.drawImage(sc, area.x + (area.width - iw) / 2, area.y + (area.height - ih) / 2, iw, ih, null);
+        } else {
+            g.setColor(new Color(0xB8B8C4)); g.setFont(f(Font.BOLD, 15)); String m = "Connecting to " + shared.name + "'s screen...";
+            g.drawString(m, area.x + (area.width - g.getFontMetrics().stringWidth(m)) / 2, area.y + area.height / 2);
+        }
+        frame(g, area.x, area.y, area.width, area.height, 3, YEL);
+        g.setFont(f(Font.BOLD, 13)); String badge = (shared.me ? "You are" : shared.name + " is") + " sharing a screen";
+        int bw = g.getFontMetrics().stringWidth(badge) + 28; g.setColor(new Color(0, 0, 0, 170)); g.fillRoundRect(w - bw - 16, 16, bw, 30, 15, 15);
+        g.setColor(YEL); g.drawString(badge, w - bw - 2, 36);
+        int th = Math.min(strip - 10, 96), tw = th * 4 / 3;
+        if (n * tw + (n - 1) * gap > w - 32) { tw = Math.max(48, (w - 32 - gap * (n - 1)) / n); th = tw * 3 / 4; }
+        int x = (w - (n * tw + (n - 1) * gap)) / 2, y = h - th - 14;
+        for (Tile t : tiles) { paintTile(g, t, x, y, tw, th); x += tw + gap; }
+        rects.put(shared.user, area);
     }
     void paintTile(Graphics2D g, Tile t, int x, int y, int w, int h) {
         rects.put(t.user, new Rectangle(x, y, w, h));

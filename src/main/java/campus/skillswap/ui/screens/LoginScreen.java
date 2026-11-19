@@ -114,6 +114,7 @@ public class LoginScreen {
         if (u == null) return;
         if (u.banned) { JOptionPane.showMessageDialog(frame, "This account has been banned by a campus moderator." + (u.banReason == null || u.banReason.isEmpty() ? "" : "\n\nReason: " + u.banReason), "Account banned", JOptionPane.ERROR_MESSAGE); return; }
         me = u;
+        clearUnread();
         if (u.moderator) {
             page = "Moderation"; lastMsgSeen = System.currentTimeMillis(); draft = ""; chatWith = null;
             rootCards.show(root, "app"); show("Moderation");

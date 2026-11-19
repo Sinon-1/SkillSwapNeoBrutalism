@@ -186,9 +186,14 @@ public class BookingsScreen {
         User l = S.users.get(s.learner); if (l.credits < 1) return false; l.credits--; s.status = "CONFIRMED"; save(); return true;
     }
     public static void rate(Sess s) {
-        JComboBox<String> r = combo(new String[]{"5 - Excellent", "4 - Good", "3 - OK", "2 - Poor", "1 - Bad"}); JTextArea t = area(3, 22);
-        if (!ask("Rate your session with " + name(s.teacher), form(new String[]{"Rating", "Feedback"}, new JComponent[]{r, scroller(t)}))) return;
-        s.rating = 5 - r.getSelectedIndex(); s.review = t.getText().trim(); save(); toast("Thanks for your feedback!");
+        StarRating pick = new StarRating(34, false).value(5);
+        String[] words = {"", "Bad", "Poor", "OK", "Good", "Excellent"};
+        JLabel chosen = lbl(words[5], Font.BOLD, 13, GOLD);
+        pick.onChange(v -> chosen.setText(words[v]));
+        JPanel stars = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0)); stars.setOpaque(false); stars.add(pick); stars.add(chosen);
+        JTextArea t = area(3, 22);
+        if (!ask("Rate your session with " + name(s.teacher), form(new String[]{"Your rating", "Feedback"}, new JComponent[]{stars, scroller(t)}))) return;
+        s.rating = pick.rating(); s.review = t.getText().trim(); save(); toast("Thanks for your feedback!");
     }
     public static void complete(Sess s) {
         s.status = "COMPLETED"; User t = S.users.get(s.teacher); t.credits = Math.min(MAX_CREDITS, t.credits + 1); save();
@@ -216,7 +221,11 @@ public class BookingsScreen {
         JPanel c = card(); c.add(avatarWrap(name(o), 40), BorderLayout.WEST); JPanel inf = vbox(); JPanel h = row();
         h.add(lbl(name(o), Font.BOLD, 13, TXT)); h.add(tag(s.status, s.status.equals("CONFIRMED") || s.status.equals("COMPLETED") ? GREEN : s.status.equals("PENDING") ? GOLD : MUTED)); h.add(tag(iLearn ? "YOU LEARN" : "YOU TEACH", BLUE)); if (s.videoCall) h.add(tag("VIDEO CALL", GOLD)); put(inf, h);
         put(inf, lbl(s.skill + " \u2022 1-on-1 \u2022 " + s.at.format(DF) + " \u2022 " + s.mode + (s.videoCall ? " (video call" + (s.status.equals("PENDING") && !s.requester.equals(me.username) ? " requested" : "") + ")" : ""), Font.PLAIN, 12, MUTED));
-        if (s.status.equals("COMPLETED") && iLearn) put(inf, lbl(s.rating > 0 ? "Your rating: " + stars(s.rating) : "Not rated yet", Font.PLAIN, 11, GOLD));
+        if (s.status.equals("COMPLETED") && iLearn) {
+            JPanel rr = row(); rr.add(lbl(s.rating > 0 ? "Your rating:" : "Not rated yet", Font.PLAIN, 11, GOLD));
+            if (s.rating > 0) rr.add(new StarRating(14, true).value(s.rating));
+            put(inf, rr);
+        }
         c.add(inf); JPanel b = new JPanel(new GridLayout(0, 3, 6, 6)); b.setOpaque(false);
         switch (s.status) {
             case "PENDING":
