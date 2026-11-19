@@ -171,9 +171,29 @@ public final class Sound {
         if (f == null || !f.isFile()) throw new IOException("The sound file was not found:\n" + (f == null ? "" : f.getAbsolutePath()));
         try { return openClipFile(f); }
         catch (Exception e) {
-            if (Videos.ffmpeg() == null) throw e;
-            return openClipFile(convert(f));
+            try { return openClipFile(convert(f, false)); }
+            catch (Exception converted) {
+                throw converted.getMessage() == null || converted.getMessage().isBlank() ? e : converted;
+            }
         }
+    }
+
+    /** Checks that an audio file can be used, converting MP3/M4A/OGG and other formats once (downloading ffmpeg if needed on Windows). Runs in the background. */
+    public static void prepare(File f, Consumer<String> done) {
+        Thread t = new Thread(() -> {
+            String err = null;
+            try {
+                if (f == null || !f.isFile()) throw new IOException("That file was not found.");
+                if (!decodable(f)) convert(f, true);
+            } catch (Exception e) { err = friendly(e); }
+            String m = err; SwingUtilities.invokeLater(() -> done.accept(m));
+        }, "notify-sound-prepare");
+        t.setDaemon(true); t.start();
+    }
+
+    static boolean decodable(File f) {
+        try (AudioInputStream in = AudioSystem.getAudioInputStream(f)) { return in.getFormat() != null; }
+        catch (Exception e) { return false; }
     }
 
     static Clip openClipFile(File f) throws Exception {
@@ -288,31 +308,105 @@ public final class Sound {
 
     // ---------------------------------------------------------------- other formats (MP3, M4A, OGG...) via ffmpeg
 
-    static File convert(File in) throws Exception {
+    static File convert(File in, boolean download) throws Exception {
         String ff = Videos.ffmpeg();
-        if (ff == null) throw new IOException("This audio format is not supported. Use a WAV file, or install ffmpeg for MP3/M4A/OGG.");
+        if (ff == null && download) { try { ff = Videos.ensureFfmpeg(); } catch (Exception ignored) { /* reported below */ } }
+        if (ff == null) {
+            boolean win = System.getProperty("os.name", "").toLowerCase().contains("win");
+            throw new IOException("This audio format needs the free ffmpeg converter. " + (win
+                    ? "Pick the sound again so the app can download it automatically."
+                    : "Install it (macOS: brew install ffmpeg, Linux: sudo apt install ffmpeg) and restart SkillSwap."));
+        }
         Path dir = DIR.resolve("cache").resolve("sounds");
         Files.createDirectories(dir);
         String base = in.getName().replaceAll("[^A-Za-z0-9._-]", "_");
         Path out = dir.resolve("snd-" + Integer.toHexString(in.getAbsolutePath().hashCode()) + "-" + base + ".wav");
-        if (Files.isRegularFile(out) && Files.getLastModifiedTime(out).toMillis() >= in.lastModified()) return out.toFile();
+        if (Files.isRegularFile(out) && Files.size(out) > 0 && Files.getLastModifiedTime(out).toMillis() >= in.lastModified()) return out.toFile();
         Path tmp = dir.resolve(out.getFileName() + ".part");
         Files.deleteIfExists(tmp);
-        Process pr = new ProcessBuilder(ff, "-y", "-i", in.getAbsolutePath(), "-vn", "-ac", "1", "-ar", "44100",
-                "-c:a", "pcm_s16le", tmp.toString()).redirectErrorStream(true).start();
-        String log = new String(pr.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        boolean done = pr.waitFor(20, TimeUnit.SECONDS);
-        if (!done) { pr.destroyForcibly(); Files.deleteIfExists(tmp); throw new IOException("Converting this sound took too long. Try a shorter file."); }
-        if (pr.exitValue() != 0 || !Files.isRegularFile(tmp)) { Files.deleteIfExists(tmp); throw new IOException("Could not read this audio file. " + firstLine(log)); }
-        Files.move(tmp, out, StandardCopyOption.REPLACE_EXISTING);
-        return out.toFile();
+        try {
+            Process pr = new ProcessBuilder(ff, "-y", "-i", in.getAbsolutePath(), "-vn", "-ac", "1", "-ar", "44100",
+                    "-c:a", "pcm_s16le", "-f", "wav", tmp.toString()).redirectErrorStream(true).start();
+            String log = new String(pr.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            boolean done = pr.waitFor(20, TimeUnit.SECONDS);
+            if (!done) { pr.destroyForcibly(); throw new IOException("Converting this sound took too long. Try a shorter file."); }
+            if (pr.exitValue() != 0 || !Files.isRegularFile(tmp) || Files.size(tmp) == 0)
+                throw new IOException("Could not read this audio file (" + bestLine(log) + ").");
+            Files.move(tmp, out, StandardCopyOption.REPLACE_EXISTING);
+            return out.toFile();
+        } finally { try { Files.deleteIfExists(tmp); } catch (IOException ignored) { } }
     }
 
-    static String firstLine(String s) { if (s == null) return ""; int i = s.indexOf('\n'); return (i < 0 ? s : s.substring(0, i)).trim(); }
+    /** First useful error line from ffmpeg's log (the first lines are just the version banner). */
+    static String bestLine(String log) {
+        if (log == null) return "unknown error";
+        String best = "";
+        for (String raw : log.split("\\R")) {
+            String line = raw.trim();
+            if (line.isEmpty()) continue;
+            String low = line.toLowerCase(java.util.Locale.ROOT);
+            if (low.contains("error") || low.contains("invalid") || low.contains("unable") || low.contains("unsupported") || low.contains("no such")) best = line;
+        }
+        if (!best.isEmpty()) return best.length() > 160 ? best.substring(0, 160) + "\u2026" : best;
+        String[] lines = log.split("\\R");
+        for (int i = lines.length - 1; i >= 0; i--) if (!lines[i].isBlank()) { String l = lines[i].trim(); return l.length() > 160 ? l.substring(0, 160) + "\u2026" : l; }
+        return "unknown error";
+    }
+
+    // ---------------------------------------------------------------- audio files and previews
+
+    /** True for sound files the picker should preview (WAV, MP3, M4A, OGG, FLAC...). */
+    public static boolean isAudio(File f) {
+        if (f == null || f.getName() == null) return false;
+        String n = f.getName().toLowerCase(java.util.Locale.ROOT);
+        int i = n.lastIndexOf('.');
+        if (i < 0 || i + 1 >= n.length()) return false;
+        return switch (n.substring(i + 1)) {
+            case "wav", "wave", "mp3", "mp2", "aiff", "aif", "aifc", "au", "snd", "m4a", "m4b", "aac",
+                 "ogg", "oga", "opus", "flac", "wma", "caf", "amr", "ac3" -> true;
+            default -> false;
+        };
+    }
+
+    static Clip previewClip;
+    static long previewGeneration;
+
+    /** Plays a sound once for the file picker preview. Replaces any preview already playing. */
+    public static void playPreview(File f, Consumer<String> fail, Runnable done) {
+        final long gen;
+        synchronized (Sound.class) { gen = ++previewGeneration; }
+        Thread t = new Thread(() -> {
+            try {
+                Clip c = openClip(f);
+                synchronized (Sound.class) {
+                    if (gen != previewGeneration) { closeQuiet(c); return; }
+                    closeQuiet(previewClip); previewClip = c;
+                }
+                c.addLineListener(ev -> {
+                    if (ev.getType() == LineEvent.Type.STOP) {
+                        synchronized (Sound.class) { if (previewClip == c) previewClip = null; }
+                        closeQuiet(c);
+                        if (done != null) SwingUtilities.invokeLater(done);
+                    }
+                });
+                c.start();
+            } catch (Exception e) {
+                String m = friendly(e);
+                if (fail != null) SwingUtilities.invokeLater(() -> fail.accept(m));
+            }
+        }, "sound-preview");
+        t.setDaemon(true); t.start();
+    }
+
+    public static void stopPreview() {
+        Clip c;
+        synchronized (Sound.class) { previewGeneration++; c = previewClip; previewClip = null; }
+        closeQuiet(c);
+    }
 
     static String friendly(Exception e) {
         if (e instanceof UnsupportedAudioFileException || e instanceof IllegalArgumentException)
-            return "That audio format is not supported. Use a WAV file, or install ffmpeg for MP3/M4A/OGG.";
+            return "That audio format is not supported. Try a WAV file, or an MP3/M4A/OGG file (the app converts those automatically).";
         if (e instanceof LineUnavailableException) return "No audio output device is available right now.";
         String m = e.getMessage();
         return m == null || m.isBlank() ? "Could not play that sound." : m.split("\\R")[0];

@@ -43,9 +43,9 @@ public class LanSync {
     public static class Delta implements Serializable {
         private static final long serialVersionUID = 1L;
         List<User> users = new ArrayList<>(); List<Post> posts = new ArrayList<>(); List<Sess> sessions = new ArrayList<>();
-        List<Msg> msgs = new ArrayList<>(); List<Report> reports = new ArrayList<>(); List<Group> groups = new ArrayList<>(); List<Integer> delPosts = new ArrayList<>(); String lastSync; Map<String, Long> seen = new HashMap<>(); List<CallSig> sig = new ArrayList<>();
-        boolean empty() { return users.isEmpty() && posts.isEmpty() && sessions.isEmpty() && msgs.isEmpty() && reports.isEmpty() && groups.isEmpty() && delPosts.isEmpty() && lastSync == null && seen.isEmpty(); }
-        boolean presenceOnly() { return users.isEmpty() && posts.isEmpty() && sessions.isEmpty() && msgs.isEmpty() && reports.isEmpty() && groups.isEmpty() && delPosts.isEmpty() && lastSync == null && !seen.isEmpty(); }
+        List<Msg> msgs = new ArrayList<>(); List<Report> reports = new ArrayList<>(); List<Group> groups = new ArrayList<>(); List<Integer> delPosts = new ArrayList<>(); List<String> delUsers = new ArrayList<>(); String lastSync; Map<String, Long> seen = new HashMap<>(); List<CallSig> sig = new ArrayList<>();
+        boolean empty() { return users.isEmpty() && posts.isEmpty() && sessions.isEmpty() && msgs.isEmpty() && reports.isEmpty() && groups.isEmpty() && delPosts.isEmpty() && delUsers.isEmpty() && lastSync == null && seen.isEmpty(); }
+        boolean presenceOnly() { return users.isEmpty() && posts.isEmpty() && sessions.isEmpty() && msgs.isEmpty() && reports.isEmpty() && groups.isEmpty() && delPosts.isEmpty() && delUsers.isEmpty() && lastSync == null && !seen.isEmpty(); }
     }
 
     public static boolean active() { return !mode.equals("off"); }
@@ -177,6 +177,7 @@ public class LanSync {
         for (Group g : S.groups) if (chg("g:" + g.id, now)) d.groups.add(g);
         if (chg("meta:sync", now)) d.lastSync = S.lastSync;
         for (String k : snap.keySet()) if (k.startsWith("p:") && !now.containsKey(k)) d.delPosts.add(Integer.parseInt(k.substring(2)));
+        for (String k : snap.keySet()) if (k.startsWith("u:") && !now.containsKey(k)) d.delUsers.add(k.substring(2));
         snap = now; if (d.empty()) return;
         byte[] b = pack(d);
         if (mode.equals("host")) { persist(); relay(b, null); } else sendUp(b);
@@ -221,6 +222,7 @@ public class LanSync {
         for (Map.Entry<String, Long> e : d.seen.entrySet()) { User u = S.users.get(e.getKey()); if (u != null && (me == null || u != me)) u.lastSeen = e.getValue(); }
         if (d.lastSync != null) S.lastSync = d.lastSync;
         for (int id : d.delPosts) S.posts.removeIf(p -> p.id == id);
+        for (String un : d.delUsers) S.users.remove(un);
     }
     /** Apply waiting changes; if a dialog is open or a video is playing, wait (retried every second). */
     static void flush(boolean force) {

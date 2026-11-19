@@ -100,22 +100,31 @@ public class SettingsScreen {
         put(box, actions);
         return box;
     }
-    /** Pick any audio file; it is previewed, and kept only if it can actually be played. */
+    /** Pick any audio file; it is checked (and MP3/M4A/OGG converted once) before it is kept. */
     static void chooseSound(Sound.Kind kind) {
         boolean call = kind == Sound.Kind.CALL;
-        JFileChooser fc = new JFileChooser();
+        JFileChooser fc = new JFileChooser(campus.skillswap.ui.media.FileFinder.lastDir());
         fc.setDialogTitle(call ? "Choose your call ringtone" : "Choose your notification sound");
-        fc.setFileFilter(new FileNameExtensionFilter("Audio files (WAV, MP3, AIFF, AU, M4A, OGG)", "wav", "mp3", "aiff", "aif", "au", "m4a", "ogg"));
-        if (fc.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) return;
+        fc.setFileFilter(new FileNameExtensionFilter("Audio files (MP3, M4A, WAV, OGG, FLAC, AIFF, WMA...)",
+                "mp3", "mp2", "m4a", "m4b", "aac", "wav", "wave", "ogg", "oga", "opus", "flac", "wma",
+                "aiff", "aif", "aifc", "au", "snd", "caf", "amr", "ac3"));
+        campus.skillswap.ui.media.FileFinder finder = campus.skillswap.ui.media.FileFinder.install(fc); fc.setPreferredSize(new Dimension(900, 580));
+        int res = fc.showOpenDialog(frame); finder.stopPlayer();
+        if (res != JFileChooser.APPROVE_OPTION) return;
+        campus.skillswap.ui.media.FileFinder.remember(fc);
         File f = fc.getSelectedFile();
-        if (f == null) return;
+        if (f == null || !f.isFile()) return;
         if (f.length() > 20L * 1024 * 1024) { info("Please choose a sound under 20 MB."); return; }
-        String before = Sound.setting(kind);
-        Sound.setSetting(kind, f.getAbsolutePath());
-        show("Settings");
-        Sound.test(kind, err -> {
-            if (err != null) { Sound.setSetting(kind, before); show("Settings"); info("That sound could not be used:\n" + err); }
-            else toast(call ? "Call ringtone set" : "Notification sound set");
+        toast("Checking this sound...");
+        Sound.prepare(f, problem -> {
+            if (problem != null) { info("That sound can't be used:\n" + problem); return; }
+            String before = Sound.setting(kind);
+            Sound.setSetting(kind, f.getAbsolutePath());
+            show("Settings");
+            Sound.test(kind, err -> {
+                if (err != null) { Sound.setSetting(kind, before); show("Settings"); info("That sound could not be used:\n" + err); }
+                else toast(call ? "Call ringtone set" : "Notification sound set");
+            });
         });
     }
     /** Records a short custom sound from the microphone. */

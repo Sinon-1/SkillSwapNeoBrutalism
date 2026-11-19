@@ -89,7 +89,7 @@ public class LoginScreen {
         JPanel sp = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0)); sp.setOpaque(false); sp.add(lbl("Swap skills. Learn from your peers.", Font.PLAIN, 13, MUTED)); put(c, sp); gap(c, 14);
         JPanel icons = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 0)); icons.setOpaque(false); for (int i = 0; i < 3; i++) icons.add(iconTile(i)); put(c, icons); gap(c, 18);
         JTextField u = field(); JPasswordField p = pass();
-        put(c, lbl("Username or school email", Font.BOLD, 12, TXT)); gap(c, 4); put(c, u); gap(c, 10); put(c, lbl("Password", Font.BOLD, 12, TXT)); gap(c, 4); put(c, passRow(p)); gap(c, 4);
+        put(c, lbl("Username or email", Font.BOLD, 12, TXT)); gap(c, 4); put(c, u); gap(c, 10); put(c, lbl("Password", Font.BOLD, 12, TXT)); gap(c, 4); put(c, passRow(p)); gap(c, 4);
         JButton forgot = ghost("<html><u>Forgot password?</u></html>", LoginScreen::forgot); ((RBtn) forgot).flat(true); forgot.setBackground(PANEL); forgot.setFont(f(Font.BOLD, 11));
         JPanel fr = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0)); fr.setOpaque(false); fr.add(forgot); put(c, fr); gap(c, 8);
         Runnable go = () -> {
@@ -158,35 +158,35 @@ public class LoginScreen {
         return ok[0];
     }
     public static void register() {
-        JTextField em = field(), un = field(), rn = field(); JPasswordField p1 = pass(), p2 = pass();
-        JCheckBox real = check("Show my real name publicly (otherwise username)", false), pub = check("Make my ratings public", true);
-        real.setBorder(null); pub.setBorder(null); real.setMargin(new Insets(0, 0, 0, 0)); pub.setMargin(new Insets(0, 0, 0, 0));
+        JTextField em = field(), un = field(); JPasswordField p1 = pass(), p2 = pass();
+        JCheckBox pub = check("Make my ratings public", true);
+        pub.setBorder(null); pub.setMargin(new Insets(0, 0, 0, 0));
         JPanel b = vbox();
-        put(b, labeled("School email", em)); gap(b, 10);
-        put(b, pair(labeled("Username", un), labeled("Real name", rn))); gap(b, 10);
+        put(b, labeled("Google account email", em)); gap(b, 10);
+        put(b, labeled("Username", un)); gap(b, 10);
         put(b, pair(labeled("Password", passRow(p1)), labeled("Confirm password", passRow(p2)))); gap(b, 4);
         put(b, lbl("At least 6 characters. Use the eye to check what you typed.", Font.PLAIN, 11, MUTED)); gap(b, 12);
-        put(b, real); gap(b, 6); put(b, pub);
+        put(b, pub);
         b.setPreferredSize(new Dimension(500, b.getPreferredSize().height));
-        if (!dialog("Create account", "Join SkillSwap with your school email", YEL, b, "CREATE ACCOUNT", () -> {
+        if (!dialog("Create account", "Join SkillSwap with any Google account", YEL, b, "CREATE ACCOUNT", () -> {
             String email = em.getText().trim().toLowerCase(), user = un.getText().trim(), pw = new String(p1.getPassword());
-            return !email.matches("^[\\w.+-]+@[\\w.-]*edu[\\w.-]*$") ? "Please use your school email (a domain containing .edu)."
+            return !email.matches("^[\\w.+-]+@[\\w-]+(\\.[\\w-]+)+$") ? "Please enter a valid email address (any Google account works)."
                 : user.length() < 3 ? "Username must be at least 3 characters." : S.users.keySet().stream().anyMatch(x -> x.equalsIgnoreCase(user)) || S.users.values().stream().anyMatch(x -> x.email.equals(email)) ? "That username or email is already registered."
                 : pw.length() < 6 ? "Password must be at least 6 characters." : !pw.equals(new String(p2.getPassword())) ? "Passwords do not match." : null; })) return;
         String email = em.getText().trim().toLowerCase(), user = un.getText().trim(), pw = new String(p1.getPassword());
         String code = String.format("%06d", new Random().nextInt(1000000)); notifyUser("SkillSwap verification", "Your code is " + code);
         String in = JOptionPane.showInputDialog(frame, "Enter the 6-digit code sent to " + email + "\n(Demo: no mail server is configured - your code is " + code + ")");
         if (in == null || !in.trim().equals(code)) { info("Verification failed. Account not created."); return; }
-        User u = new User(); u.username = user; u.email = email; u.realName = rn.getText().trim(); u.useRealName = real.isSelected() && !u.realName.isEmpty();
+        User u = new User(); u.username = user; u.email = email;
         u.publicRatings = pub.isSelected(); u.passHash = hash(user, pw); S.users.put(user, u); save(); info("Account created! Add the skills you teach and want to learn in My Profile."); enter(u); show("Profile");
     }
     public static void forgot() {
         JTextField em = field(); JPasswordField np = pass();
-        if (!ask("Reset password", form(new String[]{"School email", "New password"}, new JComponent[]{em, passRow(np)}))) return;
+        if (!ask("Reset password", form(new String[]{"Email", "New password"}, new JComponent[]{em, passRow(np)}))) return;
         User u = S.users.values().stream().filter(x -> x.email.equalsIgnoreCase(em.getText().trim())).findFirst().orElse(null);
         if (u == null || np.getPassword().length < 6) { info("Email not found, or password shorter than 6 characters."); return; }
         String code = String.format("%06d", new Random().nextInt(1000000));
-        String in = JOptionPane.showInputDialog(frame, "Enter the code sent to your school email\n(Demo code: " + code + ")");
+        String in = JOptionPane.showInputDialog(frame, "Enter the code sent to your email\n(Demo code: " + code + ")");
         if (in != null && in.trim().equals(code)) { u.passHash = hash(u.username, new String(np.getPassword())); save(); info("Password updated."); } else info("Wrong code.");
     }
 }

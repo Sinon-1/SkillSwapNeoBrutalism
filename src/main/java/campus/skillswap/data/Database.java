@@ -257,6 +257,76 @@ public class Database {
             p.setBoolean(7, r.resolved); p.setString(8, nz(r.resolvedBy)); p.setLong(9, r.resolvedAt); p.executeUpdate();
         }
     }
+    /** Renames a user everywhere (posts, likes, sessions, messages, reports, groups) and updates the database. */
+    public static void renameUser(String oldName, String newName) {
+        if (oldName == null || oldName.equals(newName)) return;
+        User u = S.users.remove(oldName);
+        if (u == null) return;
+        u.username = newName; S.users.put(newName, u);
+        for (Post p : S.posts) { if (oldName.equals(p.author)) p.author = newName; if (p.likes.remove(oldName)) p.likes.add(newName); }
+        for (Sess s : S.sessions) {
+            if (oldName.equals(s.teacher)) s.teacher = newName;
+            if (oldName.equals(s.learner)) s.learner = newName;
+            if (oldName.equals(s.requester)) s.requester = newName;
+        }
+        for (Msg m : S.msgs) {
+            if (oldName.equals(m.from)) m.from = newName;
+            if (oldName.equals(m.to)) m.to = newName;
+            m.hiddenBy = swapCsv(m.hiddenBy, oldName, newName);
+        }
+        for (Report r : S.reports) {
+            if (oldName.equals(r.by)) r.by = newName;
+            if (oldName.equals(r.target)) r.target = newName;
+            if (oldName.equals(r.resolvedBy)) r.resolvedBy = newName;
+        }
+        for (Group g : S.groups) {
+            if (oldName.equals(g.creator)) g.creator = newName;
+            for (int i = 0; i < g.members.size(); i++) if (oldName.equals(g.members.get(i))) g.members.set(i, newName);
+        }
+        if (LanSync.active()) { save(); return; }   // deltas carry the renamed rows and the removed old user
+        if (db == null) return;
+        try {
+            db.setAutoCommit(false);
+            try {
+                update("UPDATE posts SET author=? WHERE author=?", newName, oldName);
+                update("UPDATE post_likes SET username=? WHERE username=?", newName, oldName);
+                update("UPDATE sessions SET teacher=? WHERE teacher=?", newName, oldName);
+                update("UPDATE sessions SET learner=? WHERE learner=?", newName, oldName);
+                update("UPDATE sessions SET requester=? WHERE requester=?", newName, oldName);
+                update("UPDATE messages SET from_user=? WHERE from_user=?", newName, oldName);
+                update("UPDATE messages SET to_user=? WHERE to_user=?", newName, oldName);
+                update("UPDATE reports SET by_user=? WHERE by_user=?", newName, oldName);
+                update("UPDATE reports SET target=? WHERE target=?", newName, oldName);
+                update("UPDATE reports SET resolved_by=? WHERE resolved_by=?", newName, oldName);
+                update("UPDATE chat_groups SET creator=? WHERE creator=?", newName, oldName);
+                update("UPDATE chat_group_members SET username=? WHERE username=?", newName, oldName);
+                try (PreparedStatement p = db.prepareStatement("SELECT id,hidden_by FROM messages WHERE hidden_by LIKE ?")) {
+                    p.setString(1, "%" + oldName + "%");
+                    Map<Integer, String> fix = new HashMap<>();
+                    try (ResultSet r = p.executeQuery()) { while (r.next()) { String h = nz(r.getString(2)), n = swapCsv(h, oldName, newName); if (!h.equals(n)) fix.put(r.getInt(1), n); } }
+                    try (PreparedStatement up = db.prepareStatement("UPDATE messages SET hidden_by=? WHERE id=?")) {
+                        for (Map.Entry<Integer, String> e : fix.entrySet()) { up.setString(1, e.getValue()); up.setInt(2, e.getKey()); up.addBatch(); }
+                        up.executeBatch();
+                    }
+                }
+                try (PreparedStatement d = db.prepareStatement("DELETE FROM users WHERE username=?")) { d.setString(1, oldName); d.executeUpdate(); }
+                writeUser(u);
+                db.commit();
+            } catch (SQLException e) { db.rollback(); throw e; }
+            finally { db.setAutoCommit(true); }
+            ver++; snap = fingerprints(S);
+        } catch (SQLException e) { toast("Database error: " + nz(e.getMessage()).split("\n")[0]); }
+    }
+    /** Replace one value in a comma-separated list (used by Msg.hiddenBy). */
+    public static String swapCsv(String csv, String oldName, String newName) {
+        if (csv == null || csv.isEmpty()) return csv;
+        String[] p = csv.split(","); boolean hit = false;
+        for (int i = 0; i < p.length; i++) if (p[i].trim().equals(oldName)) { p[i] = newName; hit = true; }
+        return hit ? String.join(",", p) : csv;
+    }
+    static void update(String sql, String a, String b) throws SQLException {
+        try (PreparedStatement p = db.prepareStatement(sql)) { p.setString(1, a); p.setString(2, b); p.executeUpdate(); }
+    }
     /** Load everything from PostgreSQL (seeding demo data on an empty database). */
     public static void initData() throws Exception {
         if (LanSync.active()) { LanSync.initData(); return; }

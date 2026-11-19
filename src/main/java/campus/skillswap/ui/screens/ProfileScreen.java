@@ -54,11 +54,11 @@ public class ProfileScreen {
 
     // ====================== PROFILE ======================
     public static JComponent profilePage() {
-        Pg p = pg("My Profile & Rating", me.email, btn("Edit Profile", ProfileScreen::editProfile));
+        Pg p = pg("My Profile & Rating", me.email, profileActions());
         JPanel hd = card(); hd.add(avatarWrap(name(me), 72), BorderLayout.WEST); JPanel inf = vbox(); JPanel nm = row(); nm.add(lbl(name(me), Font.BOLD, 18, TXT)); if (verified(me)) nm.add(tag("VERIFIED TUTOR", GREEN));
         if (me.moderator) nm.add(tag("MODERATOR", GREEN));
         nm.add(tag(me.publicRatings ? "RATINGS PUBLIC" : "RATINGS PRIVATE", MUTED)); put(inf, nm); put(inf, lbl(me.bio.isEmpty() ? "Add your year & course with Edit Profile" : me.bio, Font.PLAIN, 12, MUTED));
-        put(inf, lbl(me.useRealName ? "Showing real name (username: " + me.username + ")" : "Showing username" + (me.realName.isEmpty() ? "" : " (real name hidden)"), Font.PLAIN, 11, MUTED)); hd.add(inf); put(p.body, hd); gap(p.body, 8);
+        put(inf, lbl("Username: " + me.username, Font.PLAIN, 11, MUTED)); hd.add(inf); put(p.body, hd); gap(p.body, 8);
         JPanel stats = new JPanel(new GridLayout(1, 3, 8, 0)); stats.setOpaque(false);
         long sess = S.sessions.stream().filter(s -> s.status.equals("COMPLETED") && involves(s, me)).count();
         String[][] sv = {{"" + sess, "Sessions"}, {"" + reviews(me).size(), "Reviews"}, {"" + learnedN(me), "Skill swaps"}};
@@ -76,6 +76,28 @@ public class ProfileScreen {
             c.add(rt, BorderLayout.EAST); put(p.body, c); gap(p.body, 5);
         }
         return p.root;
+    }
+    /** Header buttons: edit profile details and change the public username. */
+    static JPanel profileActions() {
+        JPanel a = row(); a.add(btn("Edit Profile", ProfileScreen::editProfile)); a.add(ghost("Change username", ProfileScreen::changeUsername)); return a;
+    }
+    public static void changeUsername() {
+        JTextField un = field(); un.setText(me.username); JPasswordField pw = pass();
+        JPanel b = vbox();
+        put(b, labeled("New username", un)); gap(b, 10);
+        put(b, labeled("Current password", passRow(pw))); gap(b, 4);
+        put(b, lbl("Your username is public. Your real name stays hidden.", Font.PLAIN, 11, MUTED));
+        b.setPreferredSize(new Dimension(440, b.getPreferredSize().height));
+        if (!dialog("Change username", "Pick a new username for your account", YEL, b, "SAVE", () -> {
+            String name = un.getText().trim(), pass = new String(pw.getPassword());
+            return name.length() < 3 ? "Username must be at least 3 characters."
+                : name.equalsIgnoreCase(me.username) ? "That is already your username."
+                : S.users.keySet().stream().anyMatch(x -> x.equalsIgnoreCase(name)) ? "That username is already taken."
+                : !me.passHash.equals(hash(me.username, pass)) ? "Current password is incorrect." : null; })) return;
+        String newName = un.getText().trim();
+        me.passHash = hash(newName, new String(pw.getPassword()));
+        renameUser(me.username, newName);
+        show("Profile"); toast("Username changed to " + newName);
     }
     public static JComponent skillRow(String title, List<String> list, Color col) {
         JPanel c = card(); c.add(lbl(title, Font.BOLD, 12, TXT), BorderLayout.NORTH); JPanel r = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); r.setOpaque(false);
@@ -108,17 +130,19 @@ public class ProfileScreen {
     }
     public static void editProfile() {
         final byte[][] photo = {me.photo};
-        JTextField rn = field(); rn.setText(me.realName); JTextArea bio = area(4, 26); bio.setText(me.bio);
-        JCheckBox real = check("Show my real name publicly", me.useRealName), pub = check("Make my ratings public", me.publicRatings);
+        JTextArea bio = area(4, 26); bio.setText(me.bio);
+        JCheckBox pub = check("Make my ratings public", me.publicRatings);
         final JDialog dlg = new JDialog(frame, "Edit profile", true); final boolean[] saved = {false};
         JComponent av = avatarOf(name(me), 96, () -> photo[0]);
         JButton choose = btn("Choose photo...", null), remove = ghost("Remove", null); remove.setEnabled(photo[0] != null);
         JLabel msg = lbl("JPG or PNG. It is cropped to a square.", Font.PLAIN, 11, MUTED);
         choose.addActionListener(e -> {
-            JFileChooser fc = new JFileChooser(); fc.setDialogTitle("Choose a profile picture"); fc.setFileFilter(new FileNameExtensionFilter("Pictures (JPG, PNG, GIF, BMP)", "jpg", "jpeg", "png", "gif", "bmp"));
-            campus.skillswap.ui.media.PickerPreview.install(fc); fc.setAccessory(new campus.skillswap.ui.media.PickerPreview.ImagePreview(fc)); fc.setPreferredSize(new Dimension(860, 540));
-            if (fc.showOpenDialog(dlg) != JFileChooser.APPROVE_OPTION) return;
-            try { File f = fc.getSelectedFile(); if (f.length() > 25L * 1024 * 1024) throw new IOException("That picture is over 25 MB. Pick a smaller one.");
+            JFileChooser fc = new JFileChooser(campus.skillswap.ui.media.FileFinder.lastDir()); fc.setDialogTitle("Choose a profile picture"); fc.setFileFilter(new FileNameExtensionFilter("Pictures (JPG, PNG, GIF, BMP)", "jpg", "jpeg", "png", "gif", "bmp"));
+            campus.skillswap.ui.media.PickerPreview.install(fc); campus.skillswap.ui.media.FileFinder finder = campus.skillswap.ui.media.FileFinder.install(fc); fc.setPreferredSize(new Dimension(940, 620));
+            if (fc.showOpenDialog(dlg) != JFileChooser.APPROVE_OPTION) { finder.stopPlayer(); return; }
+            finder.stopPlayer();
+            campus.skillswap.ui.media.FileFinder.remember(fc);
+            try { File f = fc.getSelectedFile(); if (f == null || !f.isFile()) return; if (f.length() > 25L * 1024 * 1024) throw new IOException("That picture is over 25 MB. Pick a smaller one.");
                 photo[0] = makePhoto(f); remove.setEnabled(true); msg.setText("Photo ready - press Save to keep it."); av.repaint();
             } catch (Exception ex) { msg.setText(nz(ex.getMessage()).split("\n")[0]); }
         });
@@ -132,8 +156,8 @@ public class ProfileScreen {
         JPanel btns = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0)); btns.setOpaque(false); btns.add(choose); btns.add(remove); side.add(btns, c); c.gridy = 1; c.insets = new Insets(0, 0, 0, 0); side.add(msg, c);
         top.add(side, BorderLayout.CENTER); put(body, top); gap(body, 20);
         put(body, sectionTitle("ABOUT YOU")); gap(body, 8);
-        JPanel fm = form(new String[]{"Real name", "Bio / major"}, new JComponent[]{rn, scroller(bio)}); put(body, fm); gap(body, 14);
-        put(body, sectionTitle("PRIVACY")); gap(body, 6); JPanel pv = vbox(); pv.setOpaque(false); put(pv, real); gap(pv, 4); put(pv, pub); put(body, pv);
+        JPanel fm = form(new String[]{"Bio / major"}, new JComponent[]{scroller(bio)}); put(body, fm); gap(body, 14);
+        put(body, sectionTitle("PRIVACY")); gap(body, 6); JPanel pv = vbox(); pv.setOpaque(false); put(pv, pub); put(body, pv);
 
         JButton save = btn("Save changes", () -> { saved[0] = true; dlg.dispose(); });
         JPanel foot = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0)); foot.setOpaque(false); foot.setBorder(new EmptyBorder(14, 24, 18, 24)); foot.add(ghost("Cancel", dlg::dispose)); foot.add(save);
@@ -143,7 +167,7 @@ public class ProfileScreen {
         dlg.pack(); dlg.setSize(Math.max(520, dlg.getWidth()), dlg.getHeight()); dlg.setResizable(false); dlg.setLocationRelativeTo(frame);
         busy++; try { dlg.setVisible(true); } finally { busy--; }
         if (!saved[0]) return;
-        me.realName = rn.getText().trim(); me.bio = bio.getText().trim(); me.useRealName = real.isSelected() && !me.realName.isEmpty(); me.publicRatings = pub.isSelected(); me.photo = photo[0]; save(); show("Profile"); toast("Profile updated");
+        me.bio = bio.getText().trim(); me.publicRatings = pub.isSelected(); me.photo = photo[0]; save(); show("Profile"); toast("Profile updated");
     }
     public static void profileDialog(User u) {
         if (u == null) return; StringBuilder sb = new StringBuilder(name(u) + (verified(u) ? "  [VERIFIED]" : "") + (u.moderator ? "  [MODERATOR]" : "") + (u.banned ? "  [BANNED]" : "") + "\n" + (u.bio.isEmpty() ? "" : u.bio + "\n") + "\nTeaches: " + String.join(", ", u.teach) + "\nWants to learn: " + String.join(", ", u.learn) + "\nSessions taught: " + taught(u) + "\n");

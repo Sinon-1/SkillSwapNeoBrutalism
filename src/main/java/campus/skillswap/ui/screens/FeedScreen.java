@@ -121,9 +121,10 @@ public class FeedScreen {
         File[] pick = new File[1]; JLabel vl = lbl("No video selected", Font.PLAIN, 12, MUTED); Preview pv = new Preview(); JCheckBox conv = ffmpeg() != null ? check("Convert for in-app playback (recommended)", true) : null;
         JButton vb = ghost("Choose video...", null);
         vb.addActionListener(e -> {
-            JFileChooser fc = new JFileChooser(); fc.setFileFilter(new FileNameExtensionFilter("All video files (MP4, MOV, MKV, AVI, WebM, WMV, FLV, MPEG, 3GP...)", "mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "flv", "mpg", "mpeg", "3gp", "ts", "mts", "m2ts", "ogv"));
-            campus.skillswap.ui.media.PickerPreview.install(fc); ChooserPreview cp = new ChooserPreview(fc); fc.setAccessory(cp); fc.setPreferredSize(new Dimension(880, 560));
-            int res = fc.showOpenDialog(vb); cp.stop(); if (res != JFileChooser.APPROVE_OPTION) return; File f = fc.getSelectedFile();
+            JFileChooser fc = new JFileChooser(campus.skillswap.ui.media.FileFinder.lastDir()); fc.setFileFilter(new FileNameExtensionFilter("All video files (MP4, MOV, MKV, AVI, WebM, WMV, FLV, MPEG, 3GP...)", "mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "flv", "mpg", "mpeg", "3gp", "ts", "mts", "m2ts", "ogv"));
+            campus.skillswap.ui.media.PickerPreview.install(fc); campus.skillswap.ui.media.FileFinder finder = campus.skillswap.ui.media.FileFinder.install(fc); fc.setPreferredSize(new Dimension(940, 620));
+            int res = fc.showOpenDialog(vb); finder.stopPlayer(); if (res != JFileChooser.APPROVE_OPTION) return; campus.skillswap.ui.media.FileFinder.remember(fc); File f = fc.getSelectedFile();
+            if (f == null || !f.isFile()) return;
             if (f.length() > MAX_VIDEO) { info("That video is " + mb(f.length()) + ". The limit is " + mb(MAX_VIDEO) + " - trim or compress it first."); return; }
             String prob = playProblem(f);
             if (prob != null && ffmpeg() == null && JOptionPane.showConfirmDialog(vb, "This video may not play inside the app because " + prob + ".\nConvert it to MP4 (H.264 video + AAC audio) first, for example with the free HandBrake.\n\nUpload it anyway?", "Video format", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) return;

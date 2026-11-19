@@ -61,7 +61,8 @@ public class Stats {
     public static boolean verified(User u) { return reviews(u).size() >= 3 && avg(u) >= 4.5; }
     public static long taught(User u) { return S.sessions.stream().filter(s -> s.status.equals("COMPLETED") && s.teacher.equals(u.username)).count(); }
     public static long learnedN(User u) { return S.sessions.stream().filter(s -> s.status.equals("COMPLETED") && s.learner.equals(u.username)).count(); }
-    public static String name(User u) { return u.useRealName && !u.realName.isEmpty() ? u.realName : u.username; }
+    /** Display name: demo accounts keep their friendly seeded name; real accounts always show the username. */
+    public static String name(User u) { return u.demo && u.useRealName && !u.realName.isEmpty() ? u.realName : u.username; }
     public static String name(String un) { User u = S.users.get(un); return u == null ? un : name(u); }
     public static String stars(double a) { int n = (int) Math.round(a); return "\u2605".repeat(n) + "\u2606".repeat(5 - n); }
     public static List<String> inter(List<String> a, List<String> b) {

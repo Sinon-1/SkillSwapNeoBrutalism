@@ -5,6 +5,7 @@ import javax.swing.*;
 import javax.swing.Timer;
 import javax.swing.border.*;
 import java.awt.*;
+import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.*;
 import java.awt.geom.Path2D;
@@ -164,7 +165,7 @@ public class MessagesScreen {
             if (picked.size() < 2) { err = "Pick at least 2 people (use a normal chat for just one person)."; continue; }
             Group g = new Group(); g.id = nextId(); g.name = nm; g.creator = me.username; g.created = System.currentTimeMillis(); g.members.add(me.username); g.members.addAll(picked);
             S.groups.add(g); sendMsg(g.key(), SYS + name(me) + " created the group");
-            chatWith = g.key(); draft = ""; editing = 0; pendingAttach = null; show("Messages"); return;
+            chatWith = g.key(); draft = ""; editing = 0; pendingAttach.clear(); show("Messages"); return;
         }
     }
     static void groupMembers(Group g) {
@@ -213,7 +214,7 @@ public class MessagesScreen {
         if (campus.skillswap.service.GroupCalls.activeGroupId() == g.id) campus.skillswap.service.GroupCalls.leave();
         sendMsg(g.key(), SYS + name(me) + " left the group"); g.members.remove(me.username);
         if (g.creator.equals(me.username) && !g.members.isEmpty()) g.creator = g.members.get(0);
-        save(); chatWith = null; draft = ""; editing = 0; pendingAttach = null; show("Messages");
+        save(); chatWith = null; draft = ""; editing = 0; pendingAttach.clear(); show("Messages");
     }
 
     // ====================== MESSAGES ======================
@@ -227,12 +228,14 @@ public class MessagesScreen {
     }
     /** Id of the message currently being edited in the composer (0 = none), like Messenger's edit mode. */
     static int editing = 0;
-    static File pendingAttach;
+    static final List<File> pendingAttach = new ArrayList<>();
+    /** At most this many files can be attached to one send. */
+    static final int MAX_ATTACHMENTS = 10;
     static String composerChat, composerUser;
     static final Map<Integer, ImageIcon> PHOTO_THUMBS = new ConcurrentHashMap<>();
     public static final long EDIT_WINDOW_MS = 15 * 60 * 1000L;   // Messenger only allows edits for 15 minutes; unsend has no limit
     public static Msg msgById(int id) { for (Msg m : S.msgs) if (m.id == id) return m; return null; }
-    public static void editMsg(Msg m) { editing = m.id; draft = m.text; pendingAttach = null; show("Messages"); }
+    public static void editMsg(Msg m) { editing = m.id; draft = m.text; pendingAttach.clear(); show("Messages"); }
     public static void cancelEdit() { editing = 0; draft = ""; show("Messages"); }
     public static void unsend(Msg m) {
         if (!m.from.equals(me.username) || m.deleted) return;
@@ -511,7 +514,7 @@ public class MessagesScreen {
         mid.add(lbl(name(u), Font.BOLD, 16, nameC), g);
         r.add(west, BorderLayout.WEST); r.add(mid);
         if (last > 0) { JPanel e = new JPanel(new BorderLayout()); e.setOpaque(false); e.add(lbl(tshort(last), Font.BOLD, 12, nameC), BorderLayout.NORTH); r.add(e, BorderLayout.EAST); }
-        String un = u.username; r.addMouseListener(new MouseAdapter() { public void mouseClicked(MouseEvent ev) { chatWith = un; draft = ""; editing = 0; pendingAttach = null; show("Messages"); } });
+        String un = u.username; r.addMouseListener(new MouseAdapter() { public void mouseClicked(MouseEvent ev) { chatWith = un; draft = ""; editing = 0; pendingAttach.clear(); show("Messages"); } });
         return r;
     }
     public static JComponent groupRow(Group g, long last, boolean sel) {
@@ -525,7 +528,7 @@ public class MessagesScreen {
         put(tv, lbl("GROUP \u2022 " + g.members.size() + " members" + (inCall ? "  \u25CF IN A CALL" : ""), Font.BOLD, 10, inCall ? (sel ? ONACC : GREEN) : (sel ? ONACC : MUTED))); mid.add(tv, gc);
         r.add(west, BorderLayout.WEST); r.add(mid);
         if (last > 0) { JPanel e = new JPanel(new BorderLayout()); e.setOpaque(false); e.add(lbl(tshort(last), Font.BOLD, 12, nameC), BorderLayout.NORTH); r.add(e, BorderLayout.EAST); }
-        String key = g.key(); r.addMouseListener(new MouseAdapter() { public void mouseClicked(MouseEvent ev) { chatWith = key; draft = ""; editing = 0; pendingAttach = null; show("Messages"); } });
+        String key = g.key(); r.addMouseListener(new MouseAdapter() { public void mouseClicked(MouseEvent ev) { chatWith = key; draft = ""; editing = 0; pendingAttach.clear(); show("Messages"); } });
         return r;
     }
     /** Square call button whose label is a drawn icon; the tooltip keeps the action name accessible. */
@@ -627,16 +630,61 @@ public class MessagesScreen {
         pm.show(from, 0, from.getHeight());
     }
     static void pickAttachment(String kind) {
-        JFileChooser fc = new JFileChooser(); fc.setAcceptAllFileFilterUsed(!"image".equals(kind) && !"video".equals(kind));
-        if ("image".equals(kind)) { fc.setDialogTitle("Choose a photo"); fc.setFileFilter(new FileNameExtensionFilter("Pictures", "jpg", "jpeg", "png", "gif", "bmp", "wbmp")); fc.setAccessory(new PickerPreview.ImagePreview(fc)); }
-        else if ("video".equals(kind)) { fc.setDialogTitle("Choose a video"); fc.setFileFilter(new FileNameExtensionFilter("Videos", "mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "flv", "mpg", "mpeg", "3gp", "ts", "mts", "m2ts", "ogv")); fc.setAccessory(new Videos.ChooserPreview(fc)); }
-        else fc.setDialogTitle("Choose a file");
+        JFileChooser fc = new JFileChooser(campus.skillswap.ui.media.FileFinder.lastDir()); fc.setMultiSelectionEnabled(true); fc.setAcceptAllFileFilterUsed(!"image".equals(kind) && !"video".equals(kind));
+        if ("image".equals(kind)) { fc.setDialogTitle("Choose photos"); fc.setFileFilter(new FileNameExtensionFilter("Pictures", "jpg", "jpeg", "png", "gif", "bmp", "wbmp")); }
+        else if ("video".equals(kind)) { fc.setDialogTitle("Choose videos"); fc.setFileFilter(new FileNameExtensionFilter("Videos", "mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "flv", "mpg", "mpeg", "3gp", "ts", "mts", "m2ts", "ogv")); }
+        else fc.setDialogTitle("Choose files");
         PickerPreview.install(fc);
-        if (fc.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) return;
-        File f = fc.getSelectedFile();
-        if (f == null || !f.isFile()) return;
-        if (f.length() > ChatAttachments.MAX_FILE) { toast("That file is too large (" + mb(f.length()) + "). The limit is " + mb(ChatAttachments.MAX_FILE) + "."); return; }
-        pendingAttach = f; show("Messages");
+        campus.skillswap.ui.media.FileFinder finder = campus.skillswap.ui.media.FileFinder.install(fc);
+        fc.setPreferredSize(new Dimension(940, 620));
+        if (fc.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) { finder.stopPlayer(); return; }
+        finder.stopPlayer();
+        campus.skillswap.ui.media.FileFinder.remember(fc);
+        List<File> files = new ArrayList<>();
+        if (fc.getSelectedFiles() != null) files.addAll(Arrays.asList(fc.getSelectedFiles()));
+        if (files.isEmpty() && fc.getSelectedFile() != null) files.add(fc.getSelectedFile());
+        stageAttachments(files, false);
+    }
+    /** Validates chosen/dropped files, applies the size and count limits and shows them in the composer. Returns how many were added. */
+    static int stageAttachments(List<File> files, boolean append) {
+        if (files == null || files.isEmpty()) return 0;
+        if (!append) pendingAttach.clear();
+        int added = 0, tooBig = 0;
+        for (File f : files) {
+            if (f == null || !f.isFile()) continue;
+            if (pendingAttach.size() >= MAX_ATTACHMENTS) { toast("You can attach up to " + MAX_ATTACHMENTS + " files at a time."); break; }
+            if (f.length() > ChatAttachments.MAX_FILE) { tooBig++; continue; }
+            if (!pendingAttach.contains(f)) { pendingAttach.add(f); added++; }
+        }
+        if (tooBig > 0) toast(tooBig + (tooBig == 1 ? " file is" : " files are") + " too large (limit " + mb(ChatAttachments.MAX_FILE) + " each).");
+        if (added > 0) { File first = pendingAttach.get(0); campus.skillswap.ui.media.FileFinder.rememberDir(first.getParentFile()); show("Messages"); }
+        return added;
+    }
+    /** Drag & drop: dropping files anywhere on the chat attaches them to the message being written. */
+    static void enableFileDrop(JComponent c, Consumer<List<File>> onFiles) {
+        c.setTransferHandler(new TransferHandler() {
+            public boolean canImport(TransferSupport s) {
+                if (!s.isDrop() || !s.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) return false;
+                s.setDropAction(COPY); return true;
+            }
+            public boolean importData(TransferSupport s) {
+                if (!canImport(s)) return false;
+                try {
+                    Object d = s.getTransferable().getTransferData(DataFlavor.javaFileListFlavor);
+                    if (d instanceof List) {
+                        List<File> files = new ArrayList<>();
+                        for (Object o : (List<?>) d) if (o instanceof File) files.add((File) o);
+                        if (!files.isEmpty()) { onFiles.accept(files); return true; }
+                    }
+                } catch (Exception e) { }
+                return false;
+            }
+        });
+    }
+    static void droppedFiles(List<File> files) {
+        if (editing != 0) { toast("Finish editing your message first, then drop the files."); return; }
+        int n = stageAttachments(files, true);
+        if (n > 0) toast("Attached " + n + " file" + (n == 1 ? "" : "s") + " - press Send");
     }
     public static JComponent messagesPage() {
         JPanel rt = new JPanel(new BorderLayout()); rt.setBackground(BG);
@@ -651,7 +699,7 @@ public class MessagesScreen {
         if (!validChat(chatWith) && !convos.isEmpty()) chatWith = keyOf.apply(convos.get(0));
         String userKey = me == null ? null : me.username;
         if (!java.util.Objects.equals(composerUser, userKey) || !java.util.Objects.equals(composerChat, chatWith)) {
-            composerUser = userKey; composerChat = chatWith; draft = ""; editing = 0; pendingAttach = null;
+            composerUser = userKey; composerChat = chatWith; draft = ""; editing = 0; pendingAttach.clear();
         }
 
         // ---- left: title, new group button, search pill, conversation list ----
@@ -698,7 +746,7 @@ public class MessagesScreen {
             JScrollPane sp = new JScrollPane(wrap); sp.setBorder(null); sp.getViewport().setBackground(BG); sp.getVerticalScrollBar().setUnitIncrement(18); right.add(sp);
             Timer st = new Timer(40, e -> sp.getVerticalScrollBar().setValue(sp.getVerticalScrollBar().getMaximum())); st.setRepeats(false); st.start();
 
-            JTextField in = pill(pendingAttach == null ? "Type a message..." : "Add a caption...", false); in.setText(draft);
+            JTextField in = pill(pendingAttach.isEmpty() ? "Type a message..." : "Add a caption (the files go first)...", false); in.setText(draft);
             in.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
                 public void insertUpdate(javax.swing.event.DocumentEvent e) { draft = in.getText(); } public void removeUpdate(javax.swing.event.DocumentEvent e) { draft = in.getText(); } public void changedUpdate(javax.swing.event.DocumentEvent e) { draft = in.getText(); } });
             final Msg em = editing != 0 ? msgById(editing) : null; if (editing != 0 && (em == null || em.deleted || !em.from.equals(me.username) || !em.to.equals(target))) editing = 0;
@@ -709,8 +757,9 @@ public class MessagesScreen {
                     if (t.isEmpty()) return; draft = "";
                     Msg tm = msgById(editing); editing = 0;
                     if (tm != null && !tm.deleted && !t.equals(tm.text)) { tm.text = t; tm.edited = true; save(); }
-                } else if (pendingAttach != null) {
-                    File f = pendingAttach; pendingAttach = null; draft = ""; sendFile(target, t, f);
+                } else if (!pendingAttach.isEmpty()) {
+                    List<File> files = new ArrayList<>(pendingAttach); pendingAttach.clear(); draft = "";
+                    for (int i = 0; i < files.size(); i++) sendFile(target, i == 0 ? t : "", files.get(i));
                 } else {
                     if (t.isEmpty()) return; draft = ""; sendMsg(target, t);
                 }
@@ -720,7 +769,7 @@ public class MessagesScreen {
             if (editing != 0) in.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "cancelEdit"); in.getActionMap().put("cancelEdit", new AbstractAction() { public void actionPerformed(ActionEvent e) { cancelEdit(); } });
             SwingUtilities.invokeLater(() -> { in.requestFocusInWindow(); in.setCaretPosition(in.getText().length()); });
             JButton sendB = btn(editing != 0 ? "Save" : "Send", send); sendB.setFont(f(Font.BOLD, 14)); sendB.setBorder(new EmptyBorder(10, 22, 10, 22));
-            JButton attach = ghost("ATTACH", null); attach.setFont(f(Font.BOLD, 12)); attach.setBorder(new EmptyBorder(10, 14, 10, 14)); attach.setToolTipText("Send a photo, video or file");
+            JButton attach = ghost("ATTACH", null); attach.setFont(f(Font.BOLD, 12)); attach.setBorder(new EmptyBorder(10, 14, 10, 14)); attach.setToolTipText("Send a photo, video or file (or drag & drop one into the chat)");
             attach.addActionListener(e -> chooseAttachment(attach));
             JPanel bar = new JPanel(new BorderLayout(10, 0)); bar.setBackground(BG); bar.setBorder(new CompoundBorder(new MatteBorder(CB, 0, 0, 0, divider()), new EmptyBorder(12, 26, 12, 26)));
             if (editing == 0) bar.add(attach, BorderLayout.WEST);
@@ -733,17 +782,25 @@ public class MessagesScreen {
                 eb.add(lbl("\u270E Editing message: " + orig, Font.BOLD, 12, ONACC)); JButton cx = ghost("Cancel", MessagesScreen::cancelEdit); cx.setFont(f(Font.BOLD, 11)); cx.setBorder(new EmptyBorder(4, 12, 4, 12)); eb.add(cx, BorderLayout.EAST);
                 extras.add(eb, BorderLayout.NORTH);
             }
-            if (pendingAttach != null) {
-                String kind = ChatAttachments.kind(pendingAttach);
+            if (!pendingAttach.isEmpty()) {
                 JPanel pa = new JPanel(new BorderLayout(10, 0)); pa.setBackground(FIELD);
                 pa.setBorder(new CompoundBorder(new MatteBorder(CB, 0, 0, 0, divider()), new EmptyBorder(8, 26, 8, 26)));
-                JPanel pv = vbox(); put(pv, lbl("ATTACHING " + kind.toUpperCase() + ": " + shortName(pendingAttach.getName(), 44), Font.BOLD, 12, TXT));
-                put(pv, lbl(mb(pendingAttach.length()) + " - press Send when ready", Font.PLAIN, 11, MUTED));
-                JButton rm = ghost("Remove", () -> { pendingAttach = null; show("Messages"); }); rm.setFont(f(Font.BOLD, 11));
+                JPanel pv = vbox(); put(pv, lbl("ATTACHING " + pendingAttach.size() + " FILE" + (pendingAttach.size() == 1 ? "" : "S"), Font.BOLD, 12, TXT));
+                for (File file : pendingAttach) {
+                    JPanel row = new JPanel(new BorderLayout(8, 0)); row.setOpaque(false); row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 20)); row.setAlignmentX(0f);
+                    row.add(lbl(ChatAttachments.kind(file).toUpperCase() + " \u2022 " + shortName(file.getName(), 40) + " \u2022 " + mb(file.length()), Font.PLAIN, 11, MUTED));
+                    JButton x = ghost("\u00D7", () -> { pendingAttach.remove(file); show("Messages"); });
+                    ((RBtn) x).flat(true); x.setToolTipText("Remove this file"); x.setFont(f(Font.BOLD, 13)); x.setBorder(new EmptyBorder(0, 8, 0, 8));
+                    row.add(x, BorderLayout.EAST); pv.add(row);
+                }
+                put(pv, lbl("Press Send when ready", Font.PLAIN, 11, MUTED));
+                JButton rm = ghost(pendingAttach.size() == 1 ? "Remove" : "Remove all", () -> { pendingAttach.clear(); show("Messages"); }); rm.setFont(f(Font.BOLD, 11));
                 pa.add(pv); pa.add(rm, BorderLayout.EAST); extras.add(pa, BorderLayout.SOUTH);
             }
             if (extras.getComponentCount() > 0) south.add(extras, BorderLayout.NORTH);
             south.add(bar); right.add(south, BorderLayout.SOUTH);
+            Consumer<List<File>> onDrop = MessagesScreen::droppedFiles;
+            for (JComponent dc : new JComponent[]{msgs, wrap, sp, extras, south, bar, right}) enableFileDrop(dc, onDrop);
         }
         rt.add(right); return rt;
     }

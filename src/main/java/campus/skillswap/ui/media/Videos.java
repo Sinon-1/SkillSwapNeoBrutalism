@@ -151,13 +151,13 @@ public class Videos {
     static synchronized String ensureFfmpeg() throws IOException {
         String ff = ffmpeg(); if (ff != null) return ff;
         if (!System.getProperty("os.name", "").toLowerCase().contains("win")) throw new IOException("ffmpeg is not installed. Install it (macOS: brew install ffmpeg, Linux: sudo apt install ffmpeg) and restart SkillSwap.");
-        SwingUtilities.invokeLater(() -> toast("Downloading the video converter (ffmpeg, about 30 MB) - one time only..."));
+        SwingUtilities.invokeLater(() -> toast("Downloading the media converter (ffmpeg, about 30 MB) - one time only..."));
         Files.createDirectories(DIR); Path zip = DIR.resolve("ffmpeg-download.zip");
         try {
             java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL("https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip").openConnection();
             c.setInstanceFollowRedirects(true); c.setConnectTimeout(15000); c.setReadTimeout(30000); long len = c.getContentLengthLong(), got = 0; int last = -1;
             try (InputStream in = c.getInputStream(); OutputStream o = Files.newOutputStream(zip)) {
-                byte[] b = new byte[65536]; int n; while ((n = in.read(b)) > 0) { o.write(b, 0, n); got += n; int pct = len > 0 ? (int) (got * 100 / len) : -1; if (pct != last) { last = pct; final int pp = pct; SwingUtilities.invokeLater(() -> setStatus("Downloading video converter... " + (pp >= 0 ? pp + "%" : ""))); } }
+                byte[] b = new byte[65536]; int n; while ((n = in.read(b)) > 0) { o.write(b, 0, n); got += n; int pct = len > 0 ? (int) (got * 100 / len) : -1; if (pct != last) { last = pct; final int pp = pct; SwingUtilities.invokeLater(() -> setStatus("Downloading media converter... " + (pp >= 0 ? pp + "%" : ""))); } }
             }
             try (java.util.zip.ZipInputStream zi = new java.util.zip.ZipInputStream(Files.newInputStream(zip))) {
                 java.util.zip.ZipEntry e; while ((e = zi.getNextEntry()) != null) if (e.getName().toLowerCase().endsWith("/bin/ffmpeg.exe")) { Files.copy(zi, DIR.resolve("ffmpeg.exe"), StandardCopyOption.REPLACE_EXISTING); break; }
