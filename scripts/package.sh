@@ -10,7 +10,7 @@ case "$(uname -s)" in
   Darwin) TYPE=dmg ;;
   *)      TYPE=deb ;;   # use "rpm" on Fedora/RHEL, or "app-image" for a plain folder
 esac
-jpackage --type "$TYPE" --name "SkillSwap Campus" --app-version 1.0.0 \
+jpackage --type "$TYPE" --name "SkillSwap Campus" --app-version 1.0.1 \
   --input target/input --main-jar skillswap-campus.jar --main-class campus.skillswap.Main \
   --dest dist
 echo "Done - see dist/"
