@@ -169,12 +169,90 @@ public class ProfileScreen {
         if (!saved[0]) return;
         me.bio = bio.getText().trim(); me.publicRatings = pub.isSelected(); me.photo = photo[0]; save(); show("Profile"); toast("Profile updated");
     }
+    /** Read-only profile card for another student, opened by clicking their avatar or name. */
     public static void profileDialog(User u) {
-        if (u == null) return; StringBuilder sb = new StringBuilder(name(u) + (verified(u) ? "  [VERIFIED]" : "") + (u.moderator ? "  [MODERATOR]" : "") + (u.banned ? "  [BANNED]" : "") + "\n" + (u.bio.isEmpty() ? "" : u.bio + "\n") + "\nTeaches: " + String.join(", ", u.teach) + "\nWants to learn: " + String.join(", ", u.learn) + "\nSessions taught: " + taught(u) + "\n");
-        if (u.banned && u.banReason != null && !u.banReason.isEmpty()) sb.append("Ban reason: ").append(u.banReason).append("\n");
-        if (u.publicRatings) { sb.append("Rating: ").append(reviews(u).isEmpty() ? "no reviews yet" : String.format("%.1f", avg(u)) + " (" + reviews(u).size() + " reviews)").append("\n");
-            for (Sess s : reviews(u)) sb.append("  ").append(stars(s.rating)).append(" ").append(s.review).append("\n"); } else sb.append("Ratings are private.\n");
-        info(sb.toString());
+        if (u == null) return;
+        stopInline();                                    // no video audio behind the profile card
+        JDialog d = new JDialog(frame, "Profile - " + name(u), true);
+        JPanel outer = new JPanel(new BorderLayout()); outer.setBackground(BG); outer.setBorder(new EmptyBorder(16, 16, 12, 12));
+        JPanel card = new JPanel(new BorderLayout()); card.setBackground(PANEL); card.setBorder(new LineBorder(INK, BW));
+
+        JPanel head = new JPanel(new BorderLayout(14, 0)); head.setBackground(YEL);
+        head.setBorder(new CompoundBorder(new MatteBorder(0, 0, CB, 0, INK), new EmptyBorder(14, 20, 12, 20)));
+        head.add(avatarWrap(name(u), 64), BorderLayout.WEST);
+        JPanel ht = vbox(); JPanel nm = row();
+        nm.add(lbl(name(u), Font.BOLD, 22, ONACC));
+        if (verified(u)) nm.add(tag("VERIFIED TUTOR", GREEN));
+        if (u.moderator) nm.add(tag("MODERATOR", BLUE));
+        if (u.banned) nm.add(tag("BANNED", PINKT));
+        put(ht, nm); put(ht, lbl("@" + u.username + (u.bio.isEmpty() ? "" : "  \u2022  " + u.bio), Font.PLAIN, 12, ONACC));
+        if (u.banned && u.banReason != null && !u.banReason.isEmpty()) put(ht, lbl("Ban reason: " + u.banReason, Font.PLAIN, 11, ONACC));
+        head.add(ht, BorderLayout.CENTER); card.add(head, BorderLayout.NORTH);
+
+        JPanel body = vbox(); body.setBorder(new EmptyBorder(14, 20, 8, 20));
+        long sess = S.sessions.stream().filter(s -> s.status.equals("COMPLETED") && involves(s, u)).count();
+        JPanel stats = new JPanel(new GridLayout(1, 3, 8, 0)); stats.setOpaque(false);
+        for (String[] sv : new String[][]{{"" + sess, "Sessions"}, {"" + reviews(u).size(), "Reviews"}, {"" + learnedN(u), "Skill swaps"}}) {
+            JPanel c = card(); c.add(lbl(sv[0], Font.BOLD, 26, TXT), BorderLayout.CENTER); c.add(lbl(sv[1], Font.PLAIN, 11, MUTED), BorderLayout.SOUTH); stats.add(c);
+        }
+        put(body, stats); gap(body, 10);
+        put(body, readSkillCard("Skills " + name(u).split("\\s+")[0] + " teaches", u.teach, GREEN)); gap(body, 6);
+        put(body, readSkillCard("Wants to learn", u.learn, GOLD)); gap(body, 10);
+
+        put(body, lbl("RATING & REVIEWS", Font.BOLD, 11, MUTED)); gap(body, 5);
+        if (!u.publicRatings) {
+            put(body, lbl("<html><body style='width:440px'>" + esc(name(u)) + " keeps their ratings private.</body></html>", Font.PLAIN, 12, MUTED));
+        } else {
+            List<Sess> rs = reviews(u);
+            JPanel rc = card(); rc.add(rs.isEmpty() ? lbl("No reviews yet - be the first to book a session.", Font.PLAIN, 12, MUTED) : new StarRating(18, true).value(avg(u)), BorderLayout.WEST);
+            if (!rs.isEmpty()) { JPanel rt = row(); rt.add(lbl(String.format("%.1f", avg(u)), Font.BOLD, 18, GOLD)); rt.add(lbl("(" + rs.size() + (rs.size() == 1 ? " review)" : " reviews)"), Font.PLAIN, 12, MUTED)); rc.add(rt, BorderLayout.CENTER); }
+            put(body, rc); gap(body, 5);
+            for (int i = rs.size() - 1; i >= 0; i--) {
+                Sess s = rs.get(i); JPanel c = card(); c.add(avatarWrap(name(s.learner), 30), BorderLayout.WEST);
+                JPanel iv = vbox(); put(iv, lbl(name(s.learner) + "  \u2022  " + s.skill, Font.BOLD, 12, TXT));
+                put(iv, lbl(s.review.isEmpty() ? "(no comment)" : s.review, Font.PLAIN, 12, MUTED)); c.add(iv);
+                JPanel rt = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 8)); rt.setOpaque(false);
+                rt.add(new StarRating(14, true).value(s.rating)); rt.add(lbl(String.format("%.1f", (double) s.rating), Font.BOLD, 11, GOLD));
+                c.add(rt, BorderLayout.EAST); put(body, c); gap(body, 5);
+            }
+        }
+
+        JScrollPane sp = new JScrollPane(body, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        sp.setBorder(null); sp.getViewport().setBackground(PANEL); sp.getVerticalScrollBar().setUnitIncrement(16);
+        sp.setPreferredSize(new Dimension(560, Math.min(560, Math.max(240, body.getPreferredSize().height))));
+        card.add(sp, BorderLayout.CENTER);
+
+        JPanel foot = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 10)); foot.setOpaque(false); foot.setBorder(new EmptyBorder(0, 16, 2, 16));
+        if (u == me) foot.add(btn("Open My Profile", () -> { d.dispose(); show("Profile"); }));
+        else {
+            foot.add(ghost("\u2691 Report", () -> { d.dispose(); report(u.username); }));
+            foot.add(ghost("Message", () -> { d.dispose(); chatWith = u.username; draft = ""; show("Messages"); }));
+            if (!u.teach.isEmpty()) foot.add(btn("BOOK SESSION", () -> { d.dispose(); book(u.username, me.username, u.teach.get(0)); }));
+        }
+        foot.add(ghost("Close", d::dispose)); card.add(foot, BorderLayout.SOUTH);
+        outer.add(card); d.setContentPane(outer);
+        d.getRootPane().registerKeyboardAction(e -> d.dispose(), KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
+        d.setResizable(false); d.pack(); d.setLocationRelativeTo(frame);
+        busy++; try { d.setVisible(true); } finally { busy--; }
+    }
+    /** Read-only skill chips (the editable one on My Profile adds/removes skills). */
+    static JPanel readSkillCard(String title, List<String> list, Color col) {
+        JPanel c = card(); c.add(lbl(title, Font.BOLD, 12, TXT), BorderLayout.NORTH);
+        JPanel r = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); r.setOpaque(false);
+        if (list.isEmpty()) r.add(lbl("Nothing listed yet", Font.PLAIN, 12, MUTED)); else for (String s : list) r.add(tag(s, col));
+        c.add(r); return c;
+    }
+    /** Makes an avatar / name (and everything inside it) open that person's profile. */
+    public static void profileLink(JComponent c, User u) { profileLink(c, u, null); }
+    public static void profileLink(JComponent c, User u, Runnable before) {
+        if (c == null || u == null) return;
+        Runnable open = () -> { if (before != null) before.run(); if (u == me) show("Profile"); else profileDialog(u); };
+        linkAll(c, open); c.setToolTipText("View " + name(u) + "'s profile");
+    }
+    static void linkAll(Component c, Runnable r) {
+        c.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        c.addMouseListener(new MouseAdapter() { public void mouseClicked(MouseEvent e) { r.run(); e.consume(); } });
+        if (c instanceof Container) for (Component k : ((Container) c).getComponents()) linkAll(k, r);
     }
     public static void report(String target) {
         JComboBox<String> r = combo(new String[]{"No-show", "Inappropriate behavior", "Harassment", "Spam / fake profile", "Other"}); JTextArea d = area(3, 22);

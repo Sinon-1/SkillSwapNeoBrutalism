@@ -55,6 +55,7 @@ public class FeedScreen {
     // ====================== FEED ======================
     public static JComponent feedPage() {
         Pg p = pg("Skill Feed", "Offers and requests from your campus", newPostButtons());
+        resetFeedAutoplay();
         JTextField q = searchField("Search topics (e.g., Java, Guitar)"); q.setText(feedQ); q.addActionListener(e -> { feedQ = q.getText().trim(); show("Feed"); }); put(p.body, q); gap(p.body, 8);
         JPanel chips = row(); for (String x : new String[]{"All", "Offers", "Requests", "Matches", "Reels"}) chips.add(chip(x, x.equals(feedFilter), () -> { feedFilter = x; show("Feed"); })); put(p.body, chips); gap(p.body, 6);
         if (feedFilter.equals("Matches")) {
@@ -76,19 +77,22 @@ public class FeedScreen {
             put(p.body, postCard(po)); gap(p.body, 8); n++;
         }
         if (n == 0) put(p.body, lbl("No posts match. Try another search or create a post.", Font.PLAIN, 12, MUTED));
+        autoplayFeed(p.scroll);                 // the video in the post you are looking at plays by itself (muted)
         return p.root;
     }
     public static JComponent matchCard(Match m) {
-        JPanel c = card(); c.add(avatarWrap(name(m.u), 40), BorderLayout.WEST); JPanel inf = vbox(); JPanel h = row();
+        JPanel c = card(); JPanel av = avatarWrap(name(m.u), 40); c.add(av, BorderLayout.WEST); JPanel inf = vbox(); JPanel h = row();
         h.add(lbl(name(m.u), Font.BOLD, 13, TXT)); h.add(m.iTeach.isEmpty() ? tag("CAN TEACH YOU", BLUE) : tag("PERFECT SWAP", GREEN)); if (verified(m.u)) h.add(tag("VERIFIED", GREEN)); put(inf, h);
+        profileLink(av, m.u); profileLink(h, m.u);
         put(inf, lbl("Teaches you: " + String.join(", ", m.theyTeach) + (m.iTeach.isEmpty() ? "" : "   \u2022   Wants to learn from you: " + String.join(", ", m.iTeach)), Font.PLAIN, 12, MUTED));
         c.add(inf, BorderLayout.CENTER); JPanel b = row(); b.add(btn("REQUEST SWAP", () -> book(m.u.username, me.username, m.theyTeach.get(0)))); b.add(ghost("Message", () -> { chatWith = m.u.username; draft = ""; show("Messages"); }));
         c.add(b, BorderLayout.EAST); return c;
     }
     public static JComponent postCard(Post po) {
         User a = S.users.get(po.author); boolean mine = po.author.equals(me.username); boolean offer = po.type.equals("OFFER");
-        JPanel c = card(); c.add(avatarWrap(name(po.author), 40), BorderLayout.WEST); JPanel inf = vbox(); JPanel h = row();
+        JPanel c = card(); JPanel av = avatarWrap(name(po.author), 40); c.add(av, BorderLayout.WEST); JPanel inf = vbox(); JPanel h = row();
         h.add(lbl(name(po.author), Font.BOLD, 13, TXT)); if (a != null && verified(a)) h.add(tag("VERIFIED", GREEN)); h.add(tag(offer ? "OFFERING" : "REQUESTING", offer ? GREEN : GOLD)); put(inf, h);
+        if (a != null) { profileLink(av, a); profileLink(h, a); }
         if (a != null && !a.bio.isEmpty()) put(inf, lbl(a.bio, Font.PLAIN, 11, MUTED));
         put(inf, lbl("#" + po.skill.replace(" ", "") + "  #" + po.category + (offer ? "  #teaching" : "  #learning"), Font.BOLD, 11, PINKT));
         put(inf, lbl("<html><body style='width:300px'>" + esc(po.desc) + "</body></html>", Font.PLAIN, 12, MUTED));

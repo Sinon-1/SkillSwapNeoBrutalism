@@ -211,9 +211,10 @@ public class AppShell {
         int rank = 1;
         for (User u : us.subList(0, Math.min(5, us.size()))) {
             JPanel r = card(); r.setBorder(new EmptyBorder(6, 8, 6, 4));
-            r.add(avatarWrap(name(u), 36), BorderLayout.WEST);
+            JPanel av = avatarWrap(name(u), 36); r.add(av, BorderLayout.WEST);
             JPanel inf = vbox();
             JPanel nm = row(); nm.add(lbl(rank++ + ". " + name(u), Font.BOLD, 11, TXT)); if (verified(u)) nm.add(lbl("\u2713", Font.BOLD, 10, GREEN)); put(inf, nm);
+            profileLink(av, u); profileLink(nm, u);
             put(inf, lbl(board.equals("Most Active") ? taught(u) + " taught" : learnedN(u) + " learned", Font.PLAIN, 10, MUTED));
             JPanel rt = row();
             if (u.publicRatings && !reviews(u).isEmpty()) { rt.add(new StarRating(12, true).value(avg(u))); rt.add(lbl(String.format("%.1f", avg(u)), Font.BOLD, 11, GOLD)); }

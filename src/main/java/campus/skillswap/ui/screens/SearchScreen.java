@@ -80,8 +80,9 @@ public class SearchScreen {
         put(p.body, g); return p.root;
     }
     public static JComponent tutorCard(User u, String skill) {
-        JPanel c = card(); c.add(avatarWrap(name(u), 40), BorderLayout.WEST); JPanel inf = vbox(); JPanel h = row();
+        JPanel c = card(); JPanel av = avatarWrap(name(u), 40); c.add(av, BorderLayout.WEST); JPanel inf = vbox(); JPanel h = row();
         h.add(lbl(name(u), Font.BOLD, 13, TXT)); if (verified(u)) h.add(tag("VERIFIED", GREEN)); h.add(tag(skill, PINK)); if (campus.skillswap.service.Presence.isNearby(u)) h.add(tag("NEARBY NOW", GOLD)); put(inf, h);
+        profileLink(av, u); profileLink(h, u);
         if (!u.publicRatings) put(inf, lbl("Ratings are private", Font.PLAIN, 11, GOLD));
         else if (reviews(u).isEmpty()) put(inf, lbl("No reviews yet", Font.PLAIN, 11, GOLD));
         else {

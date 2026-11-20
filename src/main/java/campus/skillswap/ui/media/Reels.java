@@ -130,6 +130,7 @@ public class Reels {
         JPanel info = vbox(); info.setBorder(new EmptyBorder(0, reelPad, 0, 0)); JPanel who = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0)); who.setOpaque(false);
         who.add(avatar(name(po.author), 36)); who.add(lbl(name(po.author), Font.BOLD, 15, W)); User a = S.users.get(po.author); if (a != null && verified(a)) who.add(tag("VERIFIED", GREEN));
         who.add(tag(po.type.equals("OFFER") ? "OFFERING" : "REQUESTING", po.type.equals("OFFER") ? GREEN : GOLD)); put(info, who); gap(info, 6);
+        if (a != null) profileLink(who, a, Reels::closeReels);
         if (!po.desc.isEmpty()) { put(info, wrapLabel(po.desc, W, 13)); gap(info, 4); }
         put(info, lbl("#" + po.skill.replace(" ", "") + "  #" + po.category + "  #reel", Font.BOLD, 11, PINK)); main.add(info, BorderLayout.SOUTH);
 

@@ -447,7 +447,7 @@ public class Theme {
         long m = (System.currentTimeMillis() - t) / 60000; return m < 1 ? "just now" : m < 60 ? m + "m ago" : m < 1440 ? m / 60 + "h ago" : m / 1440 + "d ago";
     }
     public static String tshort(long t) { long m = (System.currentTimeMillis() - t) / 60000; return m < 1 ? "now" : m < 60 ? m + "m" : m < 1440 ? m / 60 + "h" : m / 1440 + "d"; }
-    public static class Pg { public JPanel root = new JPanel(new BorderLayout()), body = vbox(); }
+    public static class Pg { public JPanel root = new JPanel(new BorderLayout()), body = vbox(); public JScrollPane scroll; }
     /** Standard page: heavy title bar with a thick rule underneath, then a scrolling body. */
     public static Pg pg(String title, String sub, JComponent action) {
         Pg p = new Pg(); p.root.setBackground(BG);
@@ -456,7 +456,7 @@ public class Theme {
         if (action != null) { JPanel a = new JPanel(new GridBagLayout()); a.setOpaque(false); a.add(action); h.add(a, BorderLayout.EAST); }
         JPanel wrap = new JPanel(new BorderLayout()); wrap.setBackground(BG); wrap.setBorder(new EmptyBorder(16, 20, 20, 20)); wrap.add(p.body, BorderLayout.NORTH);
         JScrollPane sp = new JScrollPane(wrap, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER); sp.setBorder(null); sp.getViewport().setBackground(BG); sp.getVerticalScrollBar().setUnitIncrement(18);
-        p.root.add(h, BorderLayout.NORTH); p.root.add(sp, BorderLayout.CENTER); return p;
+        p.scroll = sp; p.root.add(h, BorderLayout.NORTH); p.root.add(sp, BorderLayout.CENTER); return p;
     }
     public static Color catColor(String c) {
         switch (c) { case "Tech": return BLUE; case "Music": return PINK; case "Arts": return new Color(0xFF9800); case "Academics": return GREEN;

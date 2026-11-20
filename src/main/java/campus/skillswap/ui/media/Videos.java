@@ -55,6 +55,8 @@ public class Videos {
 
     // ====================== VIDEO / REELS ======================
     public static final long MAX_VIDEO = 60L * 1024 * 1024;     // videos live in PostgreSQL (BYTEA), so keep them short
+    /** Size of the video in a feed post (16:9). Bigger than the old little thumbnail, still fits the card. */
+    public static final int FEED_VIDEO_W = 400, FEED_VIDEO_H = 225;
     public static String[] xfer;                                // host, port, db, user, password: video transfers use their own connection
     /** null if the in-app player (JavaFX) should handle this file; otherwise a short reason why it probably won't. */
     public static String playProblem(File f) {
@@ -170,7 +172,7 @@ public class Videos {
     }
     static final Map<Integer, Object> DL_LOCKS = new ConcurrentHashMap<>();
     /** True while a video player is on screen (inline or full-screen reels): incoming LAN/DB changes must not rebuild the UI then. */
-    public static boolean videoOpen() { return inlineLoading || inlineFx != null || Reels.reelDlg != null; }
+    public static boolean videoOpen() { return inlineLoading || inlineFx != null || feedFx != null || Reels.reelDlg != null; }
     static void withVideoLan(Post po, Consumer<File> ok, Consumer<String> fail) {
         final int id = po.id; final long size = po.videoSize;
         final Path dir = DIR.resolve("cache"), file = dir.resolve("video_" + id + "_" + po.videoName.replaceAll("[^A-Za-z0-9._-]", "_"));
@@ -220,9 +222,13 @@ public class Videos {
         }, "video-download").start();
     }
     /** In-app player: only available when VideoPlayerFX.class (and JavaFX) are present; otherwise null and the app shows a message. */
-    public static JComponent fxPlayer(File f, int w, int h, Consumer<String> onFail) {
+    public static JComponent fxPlayer(File f, int w, int h, Consumer<String> onFail) { return fxPlayer(f, w, h, onFail, false, null); }
+    /** Same, but a player that starts muted (feed autoplay) so scrolling never blasts sound. */
+    public static JComponent fxPlayer(File f, int w, int h, Consumer<String> onFail, boolean startMuted) { return fxPlayer(f, w, h, onFail, startMuted, null); }
+    /** @param onFullscreen when not null, the player shows a full-screen button that runs this. */
+    public static JComponent fxPlayer(File f, int w, int h, Consumer<String> onFail, boolean startMuted, Runnable onFullscreen) {
         Consumer<String> wrapped = why -> onFail.accept(friendly(why) + "  [" + diagnose(f) + "]");
-        try { return (JComponent) Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("create", File.class, int.class, int.class, Consumer.class).invoke(null, f, w, h, wrapped); } catch (Throwable t) { return null; }
+        try { return (JComponent) Class.forName("campus.skillswap.ui.media.VideoPlayerFX").getMethod("create", File.class, int.class, int.class, Consumer.class, boolean.class, Runnable.class).invoke(null, f, w, h, wrapped, startMuted, onFullscreen); } catch (Throwable t) { return null; }
     }
     // ---- ffmpeg: converts any video to MP4 (H.264 + AAC) so it always plays in the app ----
     static String ffmpegExe; static long ffmpegLastMiss;
@@ -440,6 +446,76 @@ public class Videos {
     public static void stopInline() {
         inlineTok++; inlineLoading = false; if (inlineFx != null) { fxStop(inlineFx); inlineFx = null; }
         if (inlineRestore != null) { Runnable r = inlineRestore; inlineRestore = null; r.run(); }
+        stopFeedAutoplay();
+    }
+
+    // ---- feed autoplay: whichever post's video is on screen plays by itself (muted) while scrolling ----
+    static final List<FeedVideo> feedVideos = new ArrayList<>();
+    static FeedVideo feedPlaying, feedFxOwner; static JScrollPane feedScroll; static Timer feedTimer; static JComponent feedFx;
+    /** Called when the feed is rebuilt: forgets the old tiles and stops any autoplay. */
+    public static void resetFeedAutoplay() { stopFeedAutoplay(); feedVideos.clear(); feedScroll = null; }
+    /** Watches the feed scroll position; when scrolling pauses, the most visible video starts (muted). */
+    public static void autoplayFeed(JScrollPane sp) {
+        if (sp == null) return;
+        feedScroll = sp;
+        sp.getVerticalScrollBar().addAdjustmentListener(e -> feedSoon());
+        sp.getViewport().addComponentListener(new ComponentAdapter() { public void componentResized(ComponentEvent e) { feedSoon(); } });
+        feedSoon();
+    }
+    static void feedSoon() {
+        if (feedTimer == null) { feedTimer = new Timer(350, e -> feedTick()); feedTimer.setRepeats(false); }
+        feedTimer.restart();
+    }
+    static void feedTick() {
+        if (feedScroll == null || feedVideos.isEmpty() || !feedScroll.isShowing()) return;
+        if (inlineFx != null || inlineLoading || Reels.reelDlg != null) return;       // a deliberate player is open
+        Rectangle vis = feedScroll.getViewport().getViewRect(); if (vis.isEmpty()) return;
+        FeedVideo best = null; double bestRatio = 0;
+        for (FeedVideo v : feedVideos) {
+            if (v.failed || !v.holder.isShowing()) continue;
+            Point at = SwingUtilities.convertPoint(v.holder, 0, 0, feedScroll.getViewport());
+            Rectangle r = new Rectangle(at, v.holder.getSize()), in = r.intersection(vis);
+            if (in.isEmpty()) continue;
+            double ratio = (double) in.width * in.height / Math.max(1, r.width * r.height);
+            if (ratio > bestRatio) { bestRatio = ratio; best = v; }
+        }
+        if (best == null || bestRatio < 0.55) { stopFeedAutoplay(); return; }
+        if (best == feedPlaying) return;
+        stopFeedAutoplay(); feedPlaying = best; best.playMuted();
+    }
+    /** Stops the autoplaying feed video (the thumbnail comes back) without forgetting the tiles. */
+    public static void stopFeedAutoplay() {
+        feedPlaying = null;
+        for (FeedVideo v : feedVideos) v.stop();
+        if (feedFx != null) { fxStop(feedFx); feedFx = null; feedFxOwner = null; }
+    }
+    /** A post's video tile in the feed, which can swap itself for a muted player. */
+    static class FeedVideo {
+        final Post post; final JPanel holder; JComponent fx; boolean loading, failed; int tok;
+        FeedVideo(Post post, JPanel holder) { this.post = post; this.holder = holder; }
+        void showTile() {
+            holder.removeAll(); holder.add(videoTile(post, FEED_VIDEO_W, FEED_VIDEO_H, false, () -> playInline(post.id, holder)), BorderLayout.WEST);
+            holder.revalidate(); holder.repaint();
+        }
+        void playMuted() {
+            if (fx != null || loading) return;
+            loading = true; final int my = ++tok;
+            withVideo(post, file -> {
+                loading = false;
+                if (my != tok || feedPlaying != this) return;
+                JComponent p = fxPlayer(file, FEED_VIDEO_W, FEED_VIDEO_H, msg -> { if (my == tok) failed(); }, true,
+                        () -> { stopFeedAutoplay(); openReels(post.id); });
+                if (p == null) { failed(); return; }
+                fx = p; feedFx = p; feedFxOwner = this;
+                holder.removeAll(); holder.add(p, BorderLayout.WEST); holder.revalidate(); holder.repaint();
+            }, err -> { if (my == tok) { loading = false; failed(); } });
+        }
+        void failed() { failed = true; if (feedPlaying == this) feedPlaying = null; stop(); }
+        void stop() {
+            tok++; loading = false;
+            if (fx != null) { fxStop(fx); fx = null; showTile(); }
+            if (feedFxOwner == this) { feedFx = null; feedFxOwner = null; }
+        }
     }
     /** Playback failed: stay in the app, say why, and let the person choose to open their own video player. */
     static void failInline(JPanel holder, File file, String why, Runnable restore) {
@@ -453,21 +529,24 @@ public class Videos {
     }
     public static JComponent inlineVideo(Post po) {
         JPanel holder = new JPanel(new BorderLayout()); holder.setOpaque(false);
-        holder.add(videoTile(po, 260, 146, false, () -> playInline(po.id, holder)), BorderLayout.WEST); return holder;
+        FeedVideo v = new FeedVideo(po, holder); v.showTile();
+        feedVideos.add(v);
+        return holder;
     }
     public static void playInline(int id, JPanel holder) {
         Post po = postById(id); if (po == null) return;
         stopInline(); final int tok = ++inlineTok; inlineLoading = true;
-        Runnable restore = () -> { holder.removeAll(); holder.add(videoTile(po, 260, 146, false, () -> playInline(id, holder)), BorderLayout.WEST); holder.revalidate(); holder.repaint(); };
+        Runnable restore = () -> { holder.removeAll(); holder.add(videoTile(po, FEED_VIDEO_W, FEED_VIDEO_H, false, () -> playInline(id, holder)), BorderLayout.WEST); holder.revalidate(); holder.repaint(); };
         inlineRestore = restore;
         holder.removeAll(); holder.add(lbl("Loading video...", Font.PLAIN, 12, MUTED), BorderLayout.WEST); holder.revalidate(); holder.repaint();
         withVideo(po, file -> {
             if (tok != inlineTok) return;
-            int avail = holder.getWidth(); int vw = avail >= 320 ? Math.min(480, avail) : 400, vh = Math.round(vw * 9f / 16f);   // fit the post card instead of overflowing it
-            JComponent fx = fxPlayer(file, vw, vh, msg -> { if (tok == inlineTok) failInline(holder, file, msg, restore); });
+            int avail = holder.getWidth(); int vw = avail >= 360 ? Math.min(640, avail) : 480, vh = Math.round(vw * 9f / 16f);   // fit the post card instead of overflowing it
+            JComponent fx = fxPlayer(file, vw, vh, msg -> { if (tok == inlineTok) failInline(holder, file, msg, restore); }, false,
+                    () -> { stopInline(); openReels(id); });
             if (fx == null) { failInline(holder, file, "The in-app player (JavaFX) is not available. Start the app with scripts\\run-dev.bat.", restore); return; }
             inlineLoading = false; inlineFx = fx; JPanel box = new JPanel(new BorderLayout(0, 4)); box.setOpaque(false); box.add(fx);
-            JPanel bar = row(); bar.add(ghost("\u2715 Close video", Videos::stopInline)); bar.add(lbl("Click to pause  \u2022  double-click sides to skip 10s", Font.PLAIN, 11, MUTED)); box.add(bar, BorderLayout.SOUTH);
+            JPanel bar = row(); bar.add(ghost("\u2715 Close video", Videos::stopInline)); bar.add(ghost("Full screen", () -> { stopInline(); openReels(id); })); bar.add(lbl("Click to pause  \u2022  double-click sides to skip 10s", Font.PLAIN, 11, MUTED)); box.add(bar, BorderLayout.SOUTH);
             holder.removeAll(); holder.add(box, BorderLayout.WEST); holder.revalidate(); holder.repaint();
         }, err -> { if (tok != inlineTok) return; inlineLoading = false; inlineRestore = null; restore.run(); toast("Could not load video: " + err); });
     }

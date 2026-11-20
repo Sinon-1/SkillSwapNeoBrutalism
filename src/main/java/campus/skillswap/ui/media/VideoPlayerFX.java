@@ -21,6 +21,7 @@ import javafx.scene.shape.Circle;
 import javafx.scene.shape.Line;
 import javafx.scene.shape.Polygon;
 import javafx.scene.shape.Rectangle;
+import javafx.scene.shape.StrokeLineCap;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 import javafx.scene.text.Text;
@@ -55,9 +56,12 @@ public class VideoPlayerFX {
     static double volume = 1.0; static boolean muted = false;
 
     /** Autoplaying, looping video with Meta-style controls (see Controls below). */
-    public static JComponent create(File f, int w, int h) { return create(f, w, h, msg -> { }); }
+    public static JComponent create(File f, int w, int h) { return create(f, w, h, msg -> { }, false, null); }
     /** Same, but on a playback error calls onFail(reason) on the Swing thread instead of switching to another app. */
-    public static JComponent create(File f, int w, int h, java.util.function.Consumer<String> onFail) {
+    public static JComponent create(File f, int w, int h, java.util.function.Consumer<String> onFail) { return create(f, w, h, onFail, false, null); }
+    public static JComponent create(File f, int w, int h, java.util.function.Consumer<String> onFail, boolean startMuted) { return create(f, w, h, onFail, startMuted, null); }
+    /** @param startMuted true for feed autoplay; @param onFullscreen adds a full-screen button when not null. */
+    public static JComponent create(File f, int w, int h, java.util.function.Consumer<String> onFail, boolean startMuted, Runnable onFullscreen) {
         JFXPanel panel = new JFXPanel();                 // also starts the JavaFX runtime
         Platform.setImplicitExit(false);
         panel.setPreferredSize(new Dimension(w, h));
@@ -67,14 +71,16 @@ public class VideoPlayerFX {
                 MediaPlayer mp = new MediaPlayer(media);
                 mp.setCycleCount(MediaPlayer.INDEFINITE);
                 mp.setAutoPlay(true);
-                mp.setVolume(volume); mp.setMute(muted);
+                boolean m0 = startMuted || muted;
+                mp.setVolume(volume); mp.setMute(m0);
                 media.setOnError(() -> { String m = String.valueOf(media.getError()); SwingUtilities.invokeLater(() -> onFail.accept(m)); });
                 mp.setOnError(() -> { String m = String.valueOf(mp.getError()); SwingUtilities.invokeLater(() -> onFail.accept(m)); });
                 MediaView mv = new MediaView(mp);
                 mv.setPreserveRatio(true);
                 mv.setFitWidth(w);
                 mv.setFitHeight(h);
-                Controls c = new Controls(mp, mv, w, h);
+                Runnable full = onFullscreen == null ? null : () -> SwingUtilities.invokeLater(onFullscreen);
+                Controls c = new Controls(mp, mv, w, h, m0, full);
                 panel.setScene(new Scene(c.root, w, h, Color.BLACK));
                 panel.putClientProperty("mp", mp);
                 panel.putClientProperty("ctl", c);
@@ -129,11 +135,11 @@ public class VideoPlayerFX {
         final StackPane ppBtn, muteBtn; final Text speedTxt = new Text("1x");
         final PauseTransition clickDelay = new PauseTransition(Duration.millis(230)), holdTimer = new PauseTransition(Duration.millis(350)), hideTimer = new PauseTransition(Duration.millis(2600));
         final FadeTransition fade;
-        boolean dragging, holdActive, pausedByHold, suppressClick, barShown = true; double savedRate = 1; int zone;
+        boolean dragging, holdActive, pausedByHold, suppressClick, barShown = true, m; double savedRate = 1; int zone;
         final double u;   // button size
 
-        Controls(MediaPlayer mp, MediaView mv, double w, double h) {
-            this.mp = mp; this.w = w; this.h = h; u = h < 420 ? 28 : 32;
+        Controls(MediaPlayer mp, MediaView mv, double w, double h, boolean startMuted, Runnable onFullscreen) {
+            this.mp = mp; this.w = w; this.h = h; m = startMuted; u = h < 420 ? 28 : 32;
             hit.setStyle("-fx-background-color: transparent;"); hit.setCursor(Cursor.HAND);
             fb = new StackPane(); fb.setMouseTransparent(true);
             badge.setVisible(false); badge.setMouseTransparent(true); StackPane.setAlignment(badge, Pos.TOP_CENTER); StackPane.setMargin(badge, new Insets(14, 0, 0, 0));
@@ -146,8 +152,8 @@ public class VideoPlayerFX {
             speedTxt.setFill(Color.WHITE); speedTxt.setFont(Font.font("System", FontWeight.BOLD, 12));
             StackPane speed = new StackPane(speedTxt); speed.setStyle("-fx-background-color: rgba(255,255,255,0.20); -fx-background-radius: 14;"); speed.setPadding(new Insets(4, 11, 4, 11));
             speed.setCursor(Cursor.HAND); speed.setOnMouseClicked(e -> { cycleSpeed(); e.consume(); }); speed.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
-            muteBtn = btn(speakerShape(muted || volume == 0), u, this::toggleMute);
-            HBox row = new HBox(8, ppBtn, time, sp, speed, muteBtn); row.setAlignment(Pos.CENTER_LEFT);
+            muteBtn = btn(speakerShape(m || volume == 0), u, this::toggleMute);
+            HBox row = new HBox(8, ppBtn, time, sp, speed); if (onFullscreen != null) row.getChildren().add(btn(fullShape(u * 0.5), u, onFullscreen)); row.getChildren().add(muteBtn); row.setAlignment(Pos.CENTER_LEFT);
             bar.getChildren().addAll(row, seek); bar.setPadding(new Insets(36, 14, 6, 14)); bar.setAlignment(Pos.BOTTOM_LEFT);
             bar.setStyle("-fx-background-color: linear-gradient(to top, rgba(0,0,0,0.70), rgba(0,0,0,0));");
             bar.setMaxHeight(Region.USE_PREF_SIZE); StackPane.setAlignment(bar, Pos.BOTTOM_CENTER);
@@ -198,9 +204,12 @@ public class VideoPlayerFX {
             double nr = SPEEDS[(i + 1) % SPEEDS.length]; mp.setRate(nr); speedTxt.setText((nr % 1 == 0 ? String.valueOf((int) nr) : String.valueOf(nr)) + "x");
         }
         void toggleMute() {
-            muted = !muted; if (!muted && volume == 0) volume = 0.6; mp.setMute(muted); mp.setVolume(volume); refreshMute();
+            m = !m; if (!m && volume == 0) volume = 0.6;
+            mp.setMute(m); mp.setVolume(volume);
+            muted = m;                       // remember the choice for the next video
+            refreshMute();
         }
-        void refreshMute() { muteBtn.getChildren().set(1, speakerShape(muted || volume == 0)); }
+        void refreshMute() { muteBtn.getChildren().set(1, speakerShape(m || volume == 0)); }
 
         // ---- mouse on the video: click, double-click, press and hold ----
         void zoneOf(MouseEvent e) { double x = e.getX(), W = Math.max(1, hit.getWidth()); zone = x < W * 0.33 ? -1 : x > W * 0.67 ? 1 : 0; }
@@ -247,6 +256,13 @@ public class VideoPlayerFX {
         static Node pauseShape(double s) {
             Rectangle a = new Rectangle(s * 0.3, s), b = new Rectangle(s * 0.3, s); a.setFill(Color.WHITE); b.setFill(Color.WHITE);
             HBox hb = new HBox(s * 0.26, a, b); hb.setAlignment(Pos.CENTER); hb.setMaxSize(s * 0.86, s); return hb;
+        }
+        /** Four corner brackets (full-screen icon). */
+        static Node fullShape(double s) {
+            Group g = new Group(); double a = s * 0.38, t = Math.max(2, s * 0.11);
+            double[][] seg = {{0, 0, a, 0}, {0, 0, 0, a}, {s, 0, s - a, 0}, {s, 0, s, a}, {0, s, a, s}, {0, s, 0, s - a}, {s, s, s - a, s}, {s, s, s, s - a}};
+            for (double[] d : seg) { Line l = new Line(d[0], d[1], d[2], d[3]); l.setStroke(Color.WHITE); l.setStrokeWidth(t); l.setStrokeLineCap(StrokeLineCap.ROUND); g.getChildren().add(l); }
+            return g;
         }
         static Node speakerShape(boolean off) {
             Polygon body = new Polygon(0, 5, 4, 5, 10, 0, 10, 16, 4, 11, 0, 11); body.setFill(Color.WHITE);
