@@ -58,11 +58,12 @@ public class Main {
         Thread.setDefaultUncaughtExceptionHandler((t, e) -> { e.printStackTrace(); if (frame != null && frame.isShowing()) SwingUtilities.invokeLater(() -> toast("Error: " + e.getMessage())); });
         SwingUtilities.invokeLater(() -> {
             frame = new JFrame("SkillSwap Campus - Peer Learning"); frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            campus.skillswap.ui.Theme.iconify(frame);            // SkillSwap icon in the title bar, taskbar and ALT-TAB
             frame.addWindowListener(new WindowAdapter() { public void windowClosing(WindowEvent e) { try { campus.skillswap.service.Calls.shutdown(); campus.skillswap.service.Presence.goOffline(); save(); } catch (Exception ex) { } closeDb(); } });
             Rectangle screen = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
             int w = Math.min(1280, screen.width), h = Math.min(780, screen.height);
             frame.setSize(w, h); frame.setMinimumSize(new Dimension(Math.min(900, screen.width), Math.min(600, screen.height)));
-            frame.setLocation(screen.x + Math.max(0, (screen.width - w) / 2), screen.y + Math.max(0, (screen.height - h) / 2));
+                    frame.setLocation(screen.x + Math.max(0, (screen.width - w) / 2), screen.y + Math.max(0, (screen.height - h) / 2));
             if (w < 1280 || h < 780) frame.setExtendedState(JFrame.MAXIMIZED_BOTH);   // small screen: fill it so the right rail is never cut off
             String autoErr = autoConnect();
             if (autoErr != null && !connectLoop(autoErr)) System.exit(0);

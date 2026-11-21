@@ -66,15 +66,40 @@ public class MessagesScreen {
     /** Marks a chat line that is a notice ("Ana created the group", "Group video call ended") rather than typed text. */
     public static final String SYS = "\u0001";
     public static Group groupOf(String key) { if (!Group.isKey(key)) return null; for (Group g : S.groups) if (g.key().equals(key)) return g; return null; }
+    static Group groupByKeyCache; static String groupByKeyCacheStr;
+    static Group groupByKey(String key) { if (groupByKeyCacheStr == key) return groupByKeyCache; for (Group g : S.groups) if (g.key().equals(key)) { groupByKeyCacheStr = key; groupByKeyCache = g; return g; } groupByKeyCacheStr = key; groupByKeyCache = null; return null; }
     static boolean validChat(String key) { if (key == null) return false; if (Group.isKey(key)) { Group g = groupOf(key); return g != null && g.has(me.username); } User u = S.users.get(key); return u != null && !u.banned; }
 
     /** Incoming messages that the user has not seen in their chat yet. Session only, like desktop notifications. */
-    static final Set<Integer> UNREAD = ConcurrentHashMap.newKeySet();
+    static final Set<Msg> UNREAD = ConcurrentHashMap.newKeySet();
     static String unreadUser;
+
+    /** Fast lookup tables (rebuilt when S.msgs changes). */
+    static final Map<Integer, Msg> MSG_IDX = new HashMap<>();
+    static final Map<String, List<Msg>> BY_TARGET = new HashMap<>();
+    static int cachedMsgsLen = -1;
+    static Store cachedMsgsObj = null;
 
     static void ensureUnreadOwner() {
         String u = me == null ? null : me.username;
         if (!Objects.equals(unreadUser, u)) { unreadUser = u; UNREAD.clear(); }
+    }
+    public static void invalidateCaches() {
+        MSG_IDX.clear(); BY_TARGET.clear();
+        for (Msg m : S.msgs) {
+            MSG_IDX.put(m.id, m);
+            if (Group.isKey(m.to)) { BY_TARGET.computeIfAbsent(m.to, k -> new ArrayList<>()).add(m); }
+            if (me != null && m.to.equals(me.username)) { BY_TARGET.computeIfAbsent(m.from, k -> new ArrayList<>()).add(m); }
+            if (m.from.equals(me.username) && !Group.isKey(m.to)) { BY_TARGET.computeIfAbsent(m.to, k -> new ArrayList<>()).add(m); }
+        }
+        cachedMsgsLen = S.msgs.size();
+    }
+    static void ensureCaches() {
+        if (cachedMsgsObj != S || cachedMsgsLen != S.msgs.size()) { invalidateCaches(); cachedMsgsObj = S; }
+    }
+    static List<Msg> messagesFor(String target) {
+        ensureCaches();
+        return BY_TARGET.getOrDefault(target, new ArrayList<>());
     }
     public static void clearUnread() { UNREAD.clear(); unreadUser = me == null ? null : me.username; }
     static boolean incomingForMe(Msg m) {
@@ -86,9 +111,9 @@ public class MessagesScreen {
     public static int unreadCount() {
         ensureUnreadOwner();
         if (me == null) return 0;
-        UNREAD.removeIf(id -> {
-            Msg m = msgById(id);
-            return m == null || m.deleted || m.hiddenFor(me.username) || !incomingForMe(m);
+        UNREAD.removeIf(m -> {
+            if (m.deleted || m.hiddenFor(me.username) || !incomingForMe(m)) { UNREAD.remove(m); return true; }
+            return false;
         });
         return UNREAD.size();
     }
@@ -97,9 +122,8 @@ public class MessagesScreen {
         if (me == null || target == null) return;
         ensureUnreadOwner();
         boolean grp = Group.isKey(target);
-        UNREAD.removeIf(id -> {
-            Msg m = msgById(id);
-            if (m == null || m.deleted || m.hiddenFor(me.username) || m.from.equals(me.username)) return true;
+        UNREAD.removeIf(m -> {
+            if (m.deleted || m.hiddenFor(me.username) || m.from.equals(me.username)) { UNREAD.remove(m); return true; }
             return grp ? m.to.equals(target) : m.from.equals(target) && m.to.equals(me.username);
         });
     }
@@ -112,11 +136,22 @@ public class MessagesScreen {
         lastMsgSeen = Math.max(lastMsgSeen, m.time);
         boolean open = page.equals("Messages") && (direct ? m.from.equals(chatWith) : m.to.equals(chatWith));
         boolean notice = m.text != null && m.text.startsWith(SYS);
-        if (!open && !notice && !m.hiddenFor(me.username)) { ensureUnreadOwner(); UNREAD.add(m.id); }
+        if (!open && !notice && !m.hiddenFor(me.username)) { ensureUnreadOwner(); UNREAD.add(m); }
         if (notice) return;                                                                 // system notices do not pop up
         if (open) return;
         String body = m.hasFile() ? (nz(m.text).isEmpty() ? "sent you a " + m.fileLabel() : m.fileLabel() + ": " + m.text) : m.text.replace(SYS, "");
-        notifyUser(g == null ? "New message" : "New message in " + g.name, name(m.from) + ": " + body.replace(SYS, ""));
+        notifyUser(g == null ? "New message" : "New message in " + g.name, gcName(g, m.from) + ": " + body.replace(SYS, ""));
+    }
+    /** Decoded group photos, cached until the group's photo bytes change. */
+    static final Map<Integer, byte[]> GROUP_PIC_BYTES = new HashMap<>();
+    static final Map<Integer, Image> GROUP_PIC_IMG = new HashMap<>();
+    static Image groupPic(Group g) {
+        if (g == null || g.photo == null || g.photo.length == 0) return null;
+        byte[] old = GROUP_PIC_BYTES.get(g.id);
+        if (old != null && Arrays.equals(old, g.photo)) return GROUP_PIC_IMG.get(g.id);
+        Image img = null;
+        try { img = ImageIO.read(new ByteArrayInputStream(g.photo)); } catch (Exception e) { /* keep the drawn avatar */ }
+        GROUP_PIC_BYTES.put(g.id, g.photo); GROUP_PIC_IMG.put(g.id, img); return img;
     }
     public static JComponent groupAvatar(Group g, int sz) {
         return new JComponent() {
@@ -124,18 +159,33 @@ public class MessagesScreen {
             protected void paintComponent(Graphics g0) {
                 Graphics2D g2 = (Graphics2D) g0.create(); aa(g2); int d = sz - 4;
                 g2.setColor(INK); g2.fillOval(4, 4, d, d); g2.setColor(pop(g.key())); g2.fillOval(0, 0, d, d);
-                g2.setClip(new java.awt.geom.Ellipse2D.Float(0, 0, d, d)); g2.setColor(ONACC);
-                int hr = Math.round(d * 0.11f);                                              // three people: one in front, two behind
-                g2.fillOval(Math.round(d * 0.18f), Math.round(d * 0.30f), hr * 2, hr * 2); g2.fillOval(Math.round(d * 0.82f) - hr * 2, Math.round(d * 0.30f), hr * 2, hr * 2);
-                g2.fillOval(Math.round(d * 0.06f), Math.round(d * 0.62f), Math.round(d * 0.4f), Math.round(d * 0.5f)); g2.fillOval(Math.round(d * 0.54f), Math.round(d * 0.62f), Math.round(d * 0.4f), Math.round(d * 0.5f));
-                g2.setColor(pop(g.key())); g2.fillOval(d / 2 - hr - 3, Math.round(d * 0.17f) - 3, hr * 2 + 6, hr * 2 + 6); g2.fillOval(Math.round(d * 0.25f) - 3, Math.round(d * 0.55f) - 3, Math.round(d * 0.5f) + 6, Math.round(d * 0.6f) + 6);
-                g2.setColor(ONACC); g2.fillOval(d / 2 - hr, Math.round(d * 0.17f), hr * 2, hr * 2); g2.fillOval(Math.round(d * 0.25f), Math.round(d * 0.55f), Math.round(d * 0.5f), Math.round(d * 0.6f));
+                g2.setClip(new java.awt.geom.Ellipse2D.Float(0, 0, d, d));
+                Image pic = groupPic(g);
+                if (pic != null) g2.drawImage(pic, 0, 0, d, d, null);
+                else {
+                    g2.setColor(ONACC);
+                    int hr = Math.round(d * 0.11f);                                          // three people: one in front, two behind
+                    g2.fillOval(Math.round(d * 0.18f), Math.round(d * 0.30f), hr * 2, hr * 2); g2.fillOval(Math.round(d * 0.82f) - hr * 2, Math.round(d * 0.30f), hr * 2, hr * 2);
+                    g2.fillOval(Math.round(d * 0.06f), Math.round(d * 0.62f), Math.round(d * 0.4f), Math.round(d * 0.5f)); g2.fillOval(Math.round(d * 0.54f), Math.round(d * 0.62f), Math.round(d * 0.4f), Math.round(d * 0.5f));
+                    g2.setColor(pop(g.key())); g2.fillOval(d / 2 - hr - 3, Math.round(d * 0.17f) - 3, hr * 2 + 6, hr * 2 + 6); g2.fillOval(Math.round(d * 0.25f) - 3, Math.round(d * 0.55f) - 3, Math.round(d * 0.5f) + 6, Math.round(d * 0.6f) + 6);
+                    g2.setColor(ONACC); g2.fillOval(d / 2 - hr, Math.round(d * 0.17f), hr * 2, hr * 2); g2.fillOval(Math.round(d * 0.25f), Math.round(d * 0.55f), Math.round(d * 0.5f), Math.round(d * 0.6f));
+                }
                 g2.setClip(null); g2.setColor(INK); g2.setStroke(new BasicStroke(3f)); g2.drawOval(1, 1, d - 3, d - 3); g2.dispose();
             }
         };
     }
+    /** Key for a personal nickname: group id + ':' + username. */
+    static String gcNickKey(Group g, String un) { return g.id + ":" + un; }
+    /** Your nickname for someone in this group (only you see it), or null when unset. */
+    static String gcNickname(Group g, String un) {
+        if (g == null || me == null || me.gcNicknames == null || un == null) return null;
+        String v = me.gcNicknames.get(gcNickKey(g, un));
+        return v == null || v.isEmpty() ? null : v;
+    }
+    /** Name shown for someone in a group: your nickname first, then their usual name. */
+    static String gcName(Group g, String un) { String n = gcNickname(g, un); return n == null ? name(un) : n; }
     static String membersLine(Group g) {
-        List<String> n = new ArrayList<>(); for (String u : g.members) n.add(u.equals(me.username) ? "You" : name(u));
+        List<String> n = new ArrayList<>(); for (String u : g.members) n.add(u.equals(me.username) ? "You" : gcName(g, u));
         long on = g.members.stream().filter(u -> !u.equals(me.username) && campus.skillswap.service.Presence.isOnline(S.users.get(u))).count();
         String list = String.join(", ", n); if (list.length() > 60) list = list.substring(0, 57) + "...";
         return g.members.size() + " members" + (on > 0 ? "  \u2022  " + on + " online" : "") + "  \u2022  " + list;
@@ -176,20 +226,44 @@ public class MessagesScreen {
             User u = S.users.get(un); if (u == null) continue;
             JPanel r = new JPanel(new BorderLayout(10, 0)); r.setOpaque(false); r.setBorder(new EmptyBorder(4, 0, 4, 0)); r.setMaximumSize(new Dimension(Integer.MAX_VALUE, 46));
             JPanel av = new JPanel(new GridBagLayout()); av.setOpaque(false); av.add(person(ring(un), 36, () -> u.photo)); r.add(av, BorderLayout.WEST);
-            JPanel nm = row(); nm.add(lbl(name(u) + (un.equals(me.username) ? " (you)" : ""), Font.BOLD, 13, TXT)); if (un.equals(g.creator)) nm.add(tag("CREATOR", GOLD));
+            String nick = gcNickname(g, un);
+            JPanel nm = row(); nm.add(lbl(gcName(g, un) + (un.equals(me.username) ? " (you)" : ""), Font.BOLD, 13, TXT));
+            if (nick != null && !un.equals(me.username)) nm.add(lbl("(" + name(un) + ")", Font.PLAIN, 11, MUTED));
+            if (un.equals(g.creator)) nm.add(tag("CREATOR", GOLD));
             if (campus.skillswap.service.Presence.isOnline(u)) nm.add(tag("ONLINE", GREEN)); r.add(nm);
-            if (g.creator.equals(me.username) && !un.equals(me.username)) { JButton rm = ghost("Remove", () -> { after[0] = () -> removeMember(g, un); }); rm.setFont(f(Font.BOLD, 11)); rm.addActionListener(e -> closeDialog(rm)); r.add(rm, BorderLayout.EAST); }
+            if (!un.equals(me.username)) {
+                JPanel acts = row();
+                JButton nb = ghost(nick == null ? "Nickname" : "Edit nickname", () -> { after[0] = () -> setGcNickname(g, un); });
+                nb.setFont(f(Font.BOLD, 11)); nb.addActionListener(e -> closeDialog(nb)); acts.add(nb);
+                if (g.creator.equals(me.username)) { JButton rm = ghost("Remove", () -> { after[0] = () -> removeMember(g, un); }); rm.setFont(f(Font.BOLD, 11)); rm.addActionListener(e -> closeDialog(rm)); acts.add(rm); }
+                r.add(acts, BorderLayout.EAST);
+            }
             put(list, r);
         }
         JScrollPane sp = scroller(list); sp.setPreferredSize(new Dimension(380, Math.min(300, 60 + g.members.size() * 46))); sp.getViewport().setBackground(PANEL);
-        body.add(lbl(g.name, Font.BOLD, 18, TXT), BorderLayout.NORTH); body.add(sp);
+        JPanel titleBox = vbox(); put(titleBox, lbl(g.name, Font.BOLD, 18, TXT)); put(titleBox, lbl("Nicknames are private to you in this group.", Font.PLAIN, 11, MUTED));
+        body.add(titleBox, BorderLayout.NORTH); body.add(sp);
         JPanel btns = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0)); btns.setOpaque(false);
         JButton add = btn("Add people", () -> after[0] = () -> addPeople(g)); add.addActionListener(e -> closeDialog(add)); btns.add(add);
-        if (g.creator.equals(me.username)) { JButton rn = ghost("Rename", () -> after[0] = () -> renameGroup(g)); rn.addActionListener(e -> closeDialog(rn)); btns.add(rn); }
+        JButton ep = ghost("Edit profile", () -> after[0] = () -> editGroupProfile(g)); ep.addActionListener(e -> closeDialog(ep)); btns.add(ep);
         JButton lv = ghost("Leave group", () -> after[0] = () -> leaveGroup(g)); lv.addActionListener(e -> closeDialog(lv)); btns.add(lv);
         body.add(btns, BorderLayout.SOUTH);
         busy++; try { JOptionPane.showMessageDialog(frame, body, "Group members", JOptionPane.PLAIN_MESSAGE); } finally { busy--; }
         if (after[0] != null) after[0].run();
+    }
+    /** Messenger-style nickname for one member of this group. Only you see it; leave empty to use their name. */
+    static void setGcNickname(Group g, String un) {
+        JTextField t = field(); String cur = gcNickname(g, un); t.setText(cur == null ? name(un) : cur);
+        JPanel p = form(new String[]{"Nickname in " + g.name}, new JComponent[]{t}); p.setPreferredSize(new Dimension(340, 50));
+        if (!ask("Nickname for " + name(un), p)) return;
+        String n = t.getText().replaceAll("[\\r\\n\\u0000-\\u001f]", " ").trim();
+        if (n.length() > 24) n = n.substring(0, 24);
+        if (me.gcNicknames == null) me.gcNicknames = new LinkedHashMap<>();
+        if (n.isEmpty() || n.equals(name(un))) me.gcNicknames.remove(gcNickKey(g, un));
+        else me.gcNicknames.put(gcNickKey(g, un), n);
+        saveEdit();
+        show("Messages");
+        groupMembers(g);
     }
     static void addPeople(Group g) {
         List<User> cand = S.users.values().stream().filter(u -> !g.has(u.username)).sorted((x, y) -> name(x).compareToIgnoreCase(name(y))).collect(Collectors.toList());
@@ -200,10 +274,73 @@ public class MessagesScreen {
         if (added.isEmpty()) return;
         sendMsg(g.key(), SYS + name(me) + " added " + String.join(", ", added)); show("Messages");
     }
-    static void renameGroup(Group g) {
-        JTextField t = field(); t.setText(g.name); JPanel p = form(new String[]{"New name"}, new JComponent[]{t}); p.setPreferredSize(new Dimension(320, 50));
-        if (!ask("Rename group", p)) return; String n = t.getText().trim(); if (n.isEmpty() || n.equals(g.name)) return; if (n.length() > 40) n = n.substring(0, 40);
-        String old = g.name; g.name = n; sendMsg(g.key(), SYS + name(me) + " renamed the group from " + old + " to " + n); show("Messages");
+    /** Messenger-style group profile: change the group name and photo. Every member can do this. */
+    static void editGroupProfile(Group g) {
+        final byte[] originalPhoto = g.photo;
+        final byte[][] photo = { originalPhoto };
+        final String[] newName = { null };
+        final boolean[] saved = { false };
+        final JDialog dlg = new JDialog(frame, "Group profile", true); iconify(dlg);
+
+        JTextField nameF = field(); nameF.setText(g.name);
+        JComponent av = groupAvatar(g, 96);
+        JButton choose = btn("Choose photo...", null), remove = ghost("Remove photo", null);
+        remove.setEnabled(photo[0] != null);
+        JLabel msg = lbl("JPG or PNG. It is cropped to a square.", Font.PLAIN, 11, MUTED);
+        choose.addActionListener(e -> {
+            JFileChooser fc = new JFileChooser(campus.skillswap.ui.media.FileFinder.lastDir());
+            fc.setDialogTitle("Choose a group photo");
+            fc.setFileFilter(new FileNameExtensionFilter("Pictures (JPG, PNG, GIF, BMP)", "jpg", "jpeg", "png", "gif", "bmp"));
+            PickerPreview.install(fc);
+            campus.skillswap.ui.media.FileFinder finder = campus.skillswap.ui.media.FileFinder.install(fc);
+            fc.setPreferredSize(new Dimension(940, 620));
+            if (fc.showOpenDialog(dlg) != JFileChooser.APPROVE_OPTION) { finder.stopPlayer(); return; }
+            finder.stopPlayer();
+            campus.skillswap.ui.media.FileFinder.remember(fc);
+            try {
+                File f = fc.getSelectedFile(); if (f == null || !f.isFile()) return;
+                if (f.length() > 25L * 1024 * 1024) throw new IOException("That picture is over 25 MB. Pick a smaller one.");
+                photo[0] = makePhoto(f); g.photo = photo[0];                 // live preview; restored if the dialog is cancelled
+                remove.setEnabled(true); msg.setText("Photo ready - press Save to keep it."); av.repaint();
+            } catch (Exception ex) { msg.setText(nz(ex.getMessage()).split("\n")[0]); }
+        });
+        remove.addActionListener(e -> { photo[0] = null; g.photo = null; remove.setEnabled(false); msg.setText("Photo removed - press Save to keep the change."); av.repaint(); });
+
+        JPanel top = new JPanel(new BorderLayout(18, 0)); top.setOpaque(false);
+        JPanel avBox = new JPanel(new GridBagLayout()); avBox.setOpaque(false); avBox.add(av); top.add(avBox, BorderLayout.WEST);
+        JPanel side = new JPanel(new GridBagLayout()); side.setOpaque(false);
+        GridBagConstraints c = new GridBagConstraints(); c.gridx = 0; c.anchor = GridBagConstraints.WEST; c.gridy = 0; c.insets = new Insets(0, 0, 8, 0);
+        JPanel btns = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0)); btns.setOpaque(false); btns.add(choose); btns.add(remove); side.add(btns, c);
+        c.gridy = 1; c.insets = new Insets(0, 0, 0, 0); side.add(msg, c); top.add(side, BorderLayout.CENTER);
+
+        JPanel body = vbox(); body.setOpaque(true); body.setBackground(PANEL); body.setBorder(new EmptyBorder(20, 24, 8, 24));
+        put(body, lbl("GROUP NAME", Font.BOLD, 11, MUTED)); gap(body, 6);
+        put(body, labeled("Name", nameF)); gap(body, 18);
+        put(body, lbl("GROUP PHOTO", Font.BOLD, 11, MUTED)); gap(body, 12);
+        put(body, top);
+
+        JButton save = btn("Save changes", null);
+        save.addActionListener(e -> {
+            String n = nameF.getText().replaceAll("[\\r\\n\\u0000-\\u001f]", " ").trim();
+            if (n.isEmpty()) { info("Give the group a name."); return; }
+            if (n.length() > 40) n = n.substring(0, 40);
+            newName[0] = n; saved[0] = true; dlg.dispose();
+        });
+        JPanel foot = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0)); foot.setOpaque(false); foot.setBorder(new EmptyBorder(14, 24, 18, 24));
+        foot.add(ghost("Cancel", dlg::dispose)); foot.add(save);
+        JPanel root = new JPanel(new BorderLayout()); root.setBackground(PANEL); root.add(body, BorderLayout.CENTER); root.add(foot, BorderLayout.SOUTH);
+        dlg.setContentPane(root); dlg.getRootPane().setDefaultButton(save);
+        dlg.getRootPane().registerKeyboardAction(e -> dlg.dispose(), KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
+        dlg.pack(); dlg.setSize(Math.max(500, dlg.getWidth()), dlg.getHeight()); dlg.setResizable(false); dlg.setLocationRelativeTo(frame);
+        busy++; try { dlg.setVisible(true); } finally { busy--; }
+
+        if (!saved[0]) { g.photo = originalPhoto; show("Messages"); return; }   // undo the live preview
+        String old = g.name; boolean renamed = !newName[0].equals(old);
+        boolean picChanged = !Arrays.equals(originalPhoto, photo[0]);
+        g.name = newName[0]; g.photo = photo[0];
+        if (renamed) sendMsg(g.key(), SYS + name(me) + " renamed the group from " + old + " to " + g.name);
+        if (picChanged) sendMsg(g.key(), SYS + name(me) + " changed the group photo");
+        saveEdit(); show("Messages");
     }
     static void removeMember(Group g, String un) {
         if (!ask("Remove member", lbl("<html><body style='width:280px'>Remove " + esc(name(un)) + " from " + esc(g.name) + "?</body></html>", Font.PLAIN, 13, TXT))) return;
@@ -219,11 +356,13 @@ public class MessagesScreen {
 
     // ====================== MESSAGES ======================
     public static void sendMsg(String to, String text) {
-        Msg m = new Msg(); m.id = nextId(); m.from = me.username; m.to = to; m.text = text; m.time = System.currentTimeMillis(); S.msgs.add(m); save();
+        Msg m = new Msg(); m.id = nextId(); m.from = me.username; m.to = to; m.text = text; m.time = System.currentTimeMillis();
+        S.msgs.add(m); invalidateCaches(); save();
     }
     static void sendFile(String to, String text, File f) {
         Msg m = new Msg(); m.id = nextId(); m.from = me.username; m.to = to; m.text = nz(text); m.time = System.currentTimeMillis();
-        ChatAttachments.attach(m, f); ChatAttachments.keepLocal(m, f); S.msgs.add(m); save();
+        ChatAttachments.attach(m, f); ChatAttachments.keepLocal(m, f);
+        S.msgs.add(m); invalidateCaches(); save();
         ChatAttachments.upload(m, f, null, err -> { toast("Attachment upload failed: " + err); if (page.equals("Messages")) show("Messages"); });
     }
     /** Id of the message currently being edited in the composer (0 = none), like Messenger's edit mode. */
@@ -232,19 +371,22 @@ public class MessagesScreen {
     /** At most this many files can be attached to one send. */
     static final int MAX_ATTACHMENTS = 10;
     static String composerChat, composerUser;
-    static final Map<Integer, ImageIcon> PHOTO_THUMBS = new ConcurrentHashMap<>();
+    /** Photo previews kept in memory (LRU, capped so a long chat session cannot grow forever). */
+    static final Map<Integer, ImageIcon> PHOTO_THUMBS = Collections.synchronizedMap(new LinkedHashMap<Integer, ImageIcon>(64, 0.75f, true) {
+        protected boolean removeEldestEntry(Map.Entry<Integer, ImageIcon> eldest) { return size() > 120; }
+    });
     public static final long EDIT_WINDOW_MS = 15 * 60 * 1000L;   // Messenger only allows edits for 15 minutes; unsend has no limit
-    public static Msg msgById(int id) { for (Msg m : S.msgs) if (m.id == id) return m; return null; }
+    public static Msg msgById(int id) { ensureCaches(); return MSG_IDX.get(id); }
     public static void editMsg(Msg m) { editing = m.id; draft = m.text; pendingAttach.clear(); show("Messages"); }
     public static void cancelEdit() { editing = 0; draft = ""; show("Messages"); }
     public static void unsend(Msg m) {
         if (!m.from.equals(me.username) || m.deleted) return;
         if (!ask("Unsend message", lbl("<html><body style='width:280px'>Unsend this message for everyone in the chat? They will see that you unsent a message.</body></html>", Font.PLAIN, 13, TXT))) return;
-        m.deleted = true; m.text = ""; m.edited = false; ChatAttachments.removeCached(m); PHOTO_THUMBS.remove(m.id); if (editing == m.id) { editing = 0; draft = ""; } save(); show("Messages");
+        m.deleted = true; m.text = ""; m.edited = false; ChatAttachments.removeCached(m); PHOTO_THUMBS.remove(m.id); if (editing == m.id) { editing = 0; draft = ""; } invalidateCaches(); save(); show("Messages");
     }
     public static void removeForMe(Msg m) {
         if (!ask("Remove for you", lbl("<html><body style='width:280px'>Remove this message from your chat? The other person will still see it.</body></html>", Font.PLAIN, 13, TXT))) return;
-        m.hideFor(me.username); if (editing == m.id) { editing = 0; draft = ""; } save(); show("Messages");
+        m.hideFor(me.username); if (editing == m.id) { editing = 0; draft = ""; } invalidateCaches(); save(); show("Messages");
     }
     /** Right-click / "..." menu for one message. */
     static JPopupMenu msgMenu(Msg m, boolean mine) {
@@ -472,6 +614,7 @@ public class MessagesScreen {
             JComponent player = Videos.fxPlayer(file, 720, 405, err -> toast("This video cannot be played: " + err));
             if (player == null) { openWithDesktop(file); return; }
             JDialog d = new JDialog(frame, shortName(m.fileName, 60), false);
+            iconify(d);
             d.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
             d.addWindowListener(new WindowAdapter() { public void windowClosed(WindowEvent e) { Videos.fxStop(player); } });
             d.add(player); d.pack(); d.setLocationRelativeTo(frame); d.setVisible(true);
@@ -600,6 +743,7 @@ public class MessagesScreen {
         JPanel hi = new JPanel(new GridBagLayout()); hi.setOpaque(false); JPanel hv = vbox();
         put(hv, lbl(gr.name, Font.BOLD, 20, TXT)); put(hv, lbl(membersLine(gr), Font.PLAIN, 13, MUTED)); GridBagConstraints g = new GridBagConstraints(); g.anchor = GridBagConstraints.WEST; g.weightx = 1; hi.add(hv, g);
         JPanel hb = new JPanel(new GridBagLayout()); hb.setOpaque(false); JPanel hbr = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0)); hbr.setOpaque(false);
+        hbr.add(ghost("Edit profile", () -> editGroupProfile(gr)));
         hbr.add(ghost("Members", () -> groupMembers(gr)));
         final boolean inThis = campus.skillswap.service.GroupCalls.inRoom(gr.id); final List<String> liveU = campus.skillswap.service.GroupCalls.liveUsers(gr); final boolean running = !inThis && !liveU.isEmpty(), isFull = running && campus.skillswap.service.GroupCalls.full(gr);
         String callText = inThis ? "Back to call" : isFull ? "Call is full" : running ? "Join call" : "";
@@ -612,7 +756,7 @@ public class MessagesScreen {
         // "call in progress" strip under the header, like Messenger / Meet: who is in it and a Join button
         JPanel north = new JPanel(new BorderLayout()); north.setBackground(BG); north.add(h);
         JPanel ban = new JPanel(new BorderLayout(10, 0)); ban.setBackground(YEL); ban.setBorder(new CompoundBorder(new MatteBorder(0, 0, CB, 0, divider()), new EmptyBorder(8, 26, 8, 26)));
-        String who = liveU.stream().map(u -> name(u)).collect(Collectors.joining(", "));
+        String who = liveU.stream().map(u -> gcName(gr, u)).collect(Collectors.joining(", "));
         int n = campus.skillswap.service.GroupCalls.liveCount(gr);
         ban.add(lbl(inThis ? "\u25CF You are in this call" + (who.isEmpty() ? "" : " with " + who) : "\u25CF Call in progress (" + n + " of " + campus.skillswap.service.GroupCalls.MAX_PEOPLE + "): " + who, Font.BOLD, 13, ONACC));
         if (!isFull) { JButton jb = ghost(inThis ? "Open" : "Join", () -> campus.skillswap.service.GroupCalls.start(gr)); jb.setFont(f(Font.BOLD, 11)); jb.setBorder(new EmptyBorder(4, 14, 4, 14)); ban.add(jb, BorderLayout.EAST); }
@@ -689,8 +833,11 @@ public class MessagesScreen {
     }
     public static JComponent messagesPage() {
         JPanel rt = new JPanel(new BorderLayout()); rt.setBackground(BG);
+        ensureCaches();
         Map<String, Long> lastT = new HashMap<>();
-        for (Msg m : S.msgs) { if (m.from.equals(me.username)) lastT.merge(m.to, m.time, Math::max); else if (m.to.equals(me.username)) lastT.merge(m.from, m.time, Math::max); else if (Group.isKey(m.to)) lastT.merge(m.to, m.time, Math::max); }
+        for (Map.Entry<String, List<Msg>> e : BY_TARGET.entrySet()) {
+            for (Msg m : e.getValue()) lastT.merge(e.getKey(), m.time, Math::max);
+        }
         List<Object> convos = new ArrayList<>();
         for (User u : S.users.values()) if (u != me && !u.banned) convos.add(u);
         for (Group g : S.groups) if (g.has(me.username)) { convos.add(g); lastT.putIfAbsent(g.key(), g.created); }
@@ -733,13 +880,15 @@ public class MessagesScreen {
             right.add(grp ? groupHeader(gr) : dmHeader(o), BorderLayout.NORTH);
 
             JPanel msgs = vbox(); msgs.setBorder(new EmptyBorder(16, 30, 16, 30));
-            List<Msg> conv = S.msgs.stream().filter(m -> grp ? m.to.equals(target) : ((m.from.equals(me.username) && m.to.equals(o.username)) || (m.from.equals(o.username) && m.to.equals(me.username)))).filter(m -> !m.hiddenFor(me.username)).collect(Collectors.toList());
+            List<Msg> conv = new ArrayList<>(messagesFor(target));
+            conv.sort((x, y) -> Long.compare(x.time, y.time));
+            conv.removeIf(m -> m.hiddenFor(me.username));
             LocalDate lastDay = null;
             for (Msg m : conv) {
                 LocalDate d = Instant.ofEpochMilli(m.time).atZone(ZoneId.systemDefault()).toLocalDate();
                 if (!d.equals(lastDay)) { put(msgs, dayDivider(dayLabel(d))); lastDay = d; }
                 boolean mine = m.from.equals(me.username);
-                put(msgs, grp ? msgRow(m, mine, name(m.from), true) : msgRow(m, mine, name(o), false));
+                put(msgs, grp ? msgRow(m, mine, gcName(gr, m.from), true) : msgRow(m, mine, name(o), false));
             }
             if (conv.isEmpty()) { put(msgs, dayDivider("TODAY")); put(msgs, lbl(grp ? "No messages yet - say hi to the group!" : "No messages yet - say hi to " + name(o) + "!", Font.PLAIN, 13, MUTED)); }
             if (!grp) { Sess cs = S.sessions.stream().filter(s -> s.status.equals("CONFIRMED") && involves(s, me) && involves(s, o)).reduce((x, y) -> y).orElse(null); if (cs != null) put(msgs, sessionBubble(cs)); }

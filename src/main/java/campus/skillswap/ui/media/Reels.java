@@ -134,9 +134,34 @@ public class Reels {
         if (!po.desc.isEmpty()) { put(info, wrapLabel(po.desc, W, 13)); gap(info, 4); }
         put(info, lbl("#" + po.skill.replace(" ", "") + "  #" + po.category + "  #reel", Font.BOLD, 11, PINK)); main.add(info, BorderLayout.SOUTH);
 
-        withVideo(po, file -> { if (tok != reelTok) return; stage.removeAll(); stage.setLayout(new BorderLayout()); JComponent fx = fxPlayer(file, reelW, reelH, msg -> { if (tok != reelTok) return; if (reelFx != null) { fxStop(reelFx); reelFx = null; } stage.removeAll(); stage.add(reelPoster(po, msg)); stage.revalidate(); stage.repaint(); });
-                if (fx != null) { reelFx = fx; stage.add(fx); } else stage.add(reelPoster(po, "The in-app player (JavaFX) is not available. Start the app with scripts\\run-dev.bat.")); stage.revalidate(); stage.repaint(); },
-            err -> { if (tok != reelTok) return; stage.removeAll(); stage.add(lbl("<html><body style='width:300px'>Could not load video: " + esc(err) + "</body></html>", Font.PLAIN, 13, PINK)); stage.revalidate(); stage.repaint(); });
+        withVideo(po, file -> { if (tok != reelTok) return; showReel(stage, po, file, tok, false); },
+            err -> { if (tok != reelTok) return; stage.removeAll(); stage.add(lbl("<html><body style='width:320px'>Could not load video: " + esc(err) + "</body></html>", Font.PLAIN, 13, PINK)); stage.revalidate(); stage.repaint(); });
         return main;
+    }
+    /** Full-screen player. If the file can't be decoded, repair it once and retry automatically. */
+    static void showReel(JPanel stage, Post po, File file, int tok, boolean retryDone) {
+        if (tok != reelTok) return;
+        stage.removeAll(); stage.setLayout(new BorderLayout());
+        final boolean[] failed = {false};
+        JComponent fx = fxPlayer(file, reelW, reelH, msg -> {
+            if (tok != reelTok || failed[0]) return;
+            failed[0] = true;
+            if (reelFx != null) { fxStop(reelFx); reelFx = null; }
+            if (retryDone) { stage.removeAll(); stage.add(reelPoster(po, msg)); stage.revalidate(); stage.repaint(); }
+            else repairReel(stage, po, file, tok);
+        });
+        if (fx != null) { reelFx = fx; stage.add(fx); }
+        else stage.add(reelPoster(po, "The in-app player (JavaFX) is not available. Start the app with scripts\\run-dev.bat."));
+        stage.revalidate(); stage.repaint();
+    }
+    static void repairReel(JPanel stage, Post po, File file, int tok) {
+        stage.removeAll(); stage.setLayout(new GridBagLayout()); stage.add(lbl("Fixing this video so it plays...", Font.PLAIN, 14, REEL_MUTED)); stage.revalidate(); stage.repaint();
+        new Thread(() -> {
+            try { File fixed = repaired(po, file); SwingUtilities.invokeLater(() -> { if (tok == reelTok) showReel(stage, po, fixed, tok, true); }); }
+            catch (Throwable e) {
+                String m = prepareErrorMessage(e);
+                SwingUtilities.invokeLater(() -> { if (tok == reelTok) { stage.removeAll(); stage.add(reelPoster(po, m)); stage.revalidate(); stage.repaint(); } });
+            }
+        }, "video-repair").start();
     }
 }

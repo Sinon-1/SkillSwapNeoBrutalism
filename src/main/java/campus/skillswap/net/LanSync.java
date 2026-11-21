@@ -163,8 +163,22 @@ public class LanSync {
     public static int newId() {
         int id; do { id = ThreadLocalRandom.current().nextInt(1, Integer.MAX_VALUE); } while (idUsed(id)); return id;
     }
+    /** Cached set of used IDs, rebuilt when the store changes. */
+    static final Set<Integer> USED_IDS = ConcurrentHashMap.newKeySet();
+    static int usedIdsObj = 0;
+    static void rebuildIds() {
+        if (usedIdsObj == S.msgs.size() + S.posts.size() + S.sessions.size() + S.reports.size() + S.groups.size()) return;
+        USED_IDS.clear();
+        for (Post p : S.posts) USED_IDS.add(p.id);
+        for (Sess s : S.sessions) USED_IDS.add(s.id);
+        for (Msg m : S.msgs) USED_IDS.add(m.id);
+        for (Report r : S.reports) USED_IDS.add(r.id);
+        for (Group g : S.groups) USED_IDS.add(g.id);
+        usedIdsObj = S.msgs.size() + S.posts.size() + S.sessions.size() + S.reports.size() + S.groups.size();
+    }
     static boolean idUsed(int id) {
-        return S.posts.stream().anyMatch(x -> x.id == id) || S.sessions.stream().anyMatch(x -> x.id == id) || S.msgs.stream().anyMatch(x -> x.id == id) || S.reports.stream().anyMatch(x -> x.id == id) || S.groups.stream().anyMatch(x -> x.id == id);
+        if (S != null) rebuildIds();
+        return USED_IDS.contains(id);
     }
     /** Find the rows that changed since the last save and send just those. */
     public static void save() {
@@ -217,6 +231,7 @@ public class LanSync {
         for (Post p : d.posts) upsert(S.posts, p, x -> x.id);
         for (Sess s : d.sessions) upsert(S.sessions, s, x -> x.id);
         for (Msg m : d.msgs) upsert(S.msgs, m, x -> x.id);
+        if (!d.msgs.isEmpty()) campus.skillswap.ui.screens.MessagesScreen.invalidateCaches();
         for (Report r : d.reports) upsert(S.reports, r, x -> x.id);
         for (Group g : d.groups) upsert(S.groups, g, x -> x.id);
         for (Map.Entry<String, Long> e : d.seen.entrySet()) { User u = S.users.get(e.getKey()); if (u != null && (me == null || u != me)) u.lastSeen = e.getValue(); }

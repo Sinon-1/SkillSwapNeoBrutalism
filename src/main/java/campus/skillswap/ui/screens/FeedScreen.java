@@ -52,9 +52,36 @@ import static campus.skillswap.ui.media.Reels.*;
 /** Skill feed: posts, reels, matches, new post. */
 public class FeedScreen {
 
+    /** One ratings pass per feed rebuild instead of several full session scans per post. */
+    static final Map<String, Rating> FEED_RATINGS = new HashMap<>();
+    static final class Rating { final int count; final double avg; final boolean verified;
+        static final Rating ZERO = new Rating(0, 0);
+        Rating(int count, double avg) { this.count = count; this.avg = avg; this.verified = count >= 3 && avg >= 4.5; }
+    }
+    static void buildFeedRatings() {
+        FEED_RATINGS.clear();
+        List<User> users = new ArrayList<>(S.users.values());            // snapshots avoid throwing while polling updates the app state
+        for (User u : users) FEED_RATINGS.put(u.username, Rating.ZERO);
+        Map<String, int[]> sums = new HashMap<>();
+        for (Sess s : new ArrayList<>(S.sessions)) {
+            if (s.status == null || !s.status.equals("COMPLETED") || s.rating <= 0 || s.teacher == null) continue;
+            int[] v = sums.computeIfAbsent(s.teacher, k -> new int[2]); v[0]++; v[1] += s.rating;
+        }
+        for (Map.Entry<String, int[]> e : sums.entrySet()) {
+            int[] v = e.getValue(); FEED_RATINGS.put(e.getKey(), new Rating(v[0], (double) v[1] / v[0]));
+        }
+    }
+    static Rating rating(User u) {
+        if (u == null) return Rating.ZERO;
+        Rating r = FEED_RATINGS.get(u.username);
+        return r != null ? r : Rating.ZERO;
+    }
+
     // ====================== FEED ======================
     public static JComponent feedPage() {
         Pg p = pg("Skill Feed", "Offers and requests from your campus", newPostButtons());
+        buildFeedRatings();
+        prewarmFfmpeg();                    // the New Post dialog can then show the convert option without waiting
         resetFeedAutoplay();
         JTextField q = searchField("Search topics (e.g., Java, Guitar)"); q.setText(feedQ); q.addActionListener(e -> { feedQ = q.getText().trim(); show("Feed"); }); put(p.body, q); gap(p.body, 8);
         JPanel chips = row(); for (String x : new String[]{"All", "Offers", "Requests", "Matches", "Reels"}) chips.add(chip(x, x.equals(feedFilter), () -> { feedFilter = x; show("Feed"); })); put(p.body, chips); gap(p.body, 6);
@@ -71,9 +98,10 @@ public class FeedScreen {
             return p.root;
         }
         List<Post> ps = new ArrayList<>(S.posts); Collections.reverse(ps); int n = 0;
+        String needle = feedQ.toLowerCase(Locale.ROOT);
         for (Post po : ps) {
             if (feedFilter.equals("Offers") && !po.type.equals("OFFER")) continue; if (feedFilter.equals("Requests") && !po.type.equals("REQUEST")) continue;
-            if (!feedQ.isEmpty() && !(po.skill + " " + po.desc + " " + po.category + " " + name(po.author)).toLowerCase().contains(feedQ.toLowerCase())) continue;
+            if (!needle.isEmpty() && !(po.skill + " " + po.desc + " " + po.category + " " + name(po.author)).toLowerCase(Locale.ROOT).contains(needle)) continue;
             put(p.body, postCard(po)); gap(p.body, 8); n++;
         }
         if (n == 0) put(p.body, lbl("No posts match. Try another search or create a post.", Font.PLAIN, 12, MUTED));
@@ -82,7 +110,7 @@ public class FeedScreen {
     }
     public static JComponent matchCard(Match m) {
         JPanel c = card(); JPanel av = avatarWrap(name(m.u), 40); c.add(av, BorderLayout.WEST); JPanel inf = vbox(); JPanel h = row();
-        h.add(lbl(name(m.u), Font.BOLD, 13, TXT)); h.add(m.iTeach.isEmpty() ? tag("CAN TEACH YOU", BLUE) : tag("PERFECT SWAP", GREEN)); if (verified(m.u)) h.add(tag("VERIFIED", GREEN)); put(inf, h);
+        h.add(lbl(name(m.u), Font.BOLD, 13, TXT)); h.add(m.iTeach.isEmpty() ? tag("CAN TEACH YOU", BLUE) : tag("PERFECT SWAP", GREEN)); if (rating(m.u).verified) h.add(tag("VERIFIED", GREEN)); put(inf, h);
         profileLink(av, m.u); profileLink(h, m.u);
         put(inf, lbl("Teaches you: " + String.join(", ", m.theyTeach) + (m.iTeach.isEmpty() ? "" : "   \u2022   Wants to learn from you: " + String.join(", ", m.iTeach)), Font.PLAIN, 12, MUTED));
         c.add(inf, BorderLayout.CENTER); JPanel b = row(); b.add(btn("REQUEST SWAP", () -> book(m.u.username, me.username, m.theyTeach.get(0)))); b.add(ghost("Message", () -> { chatWith = m.u.username; draft = ""; show("Messages"); }));
@@ -90,8 +118,9 @@ public class FeedScreen {
     }
     public static JComponent postCard(Post po) {
         User a = S.users.get(po.author); boolean mine = po.author.equals(me.username); boolean offer = po.type.equals("OFFER");
+        Rating rat = rating(a);
         JPanel c = card(); JPanel av = avatarWrap(name(po.author), 40); c.add(av, BorderLayout.WEST); JPanel inf = vbox(); JPanel h = row();
-        h.add(lbl(name(po.author), Font.BOLD, 13, TXT)); if (a != null && verified(a)) h.add(tag("VERIFIED", GREEN)); h.add(tag(offer ? "OFFERING" : "REQUESTING", offer ? GREEN : GOLD)); put(inf, h);
+        h.add(lbl(name(po.author), Font.BOLD, 13, TXT)); if (rat.verified) h.add(tag("VERIFIED", GREEN)); h.add(tag(offer ? "OFFERING" : "REQUESTING", offer ? GREEN : GOLD)); put(inf, h);
         if (a != null) { profileLink(av, a); profileLink(h, a); }
         if (a != null && !a.bio.isEmpty()) put(inf, lbl(a.bio, Font.PLAIN, 11, MUTED));
         put(inf, lbl("#" + po.skill.replace(" ", "") + "  #" + po.category + (offer ? "  #teaching" : "  #learning"), Font.BOLD, 11, PINKT));
@@ -103,9 +132,9 @@ public class FeedScreen {
         like.setForeground(po.likes.contains(me.username) ? PINKT : TXT); foot.add(like); foot.add(lbl(ago(po.time), Font.PLAIN, 11, MUTED)); put(inf, foot);
         c.add(inf, BorderLayout.CENTER);
         JPanel ea = vbox(); ea.setPreferredSize(new Dimension(232, 96));
-        if (a != null && a.publicRatings && !reviews(a).isEmpty()) {
-            JPanel rr = row(); rr.add(new StarRating(13, true).value(avg(a)));
-            rr.add(lbl(String.format("%.1f", avg(a)) + " rating", Font.BOLD, 11, GOLD)); put(ea, rr); gap(ea, 6);
+        if (a != null && a.publicRatings && rat.count > 0) {
+            JPanel rr = row(); rr.add(new StarRating(13, true).value(rat.avg));
+            rr.add(lbl(String.format("%.1f", rat.avg) + " rating", Font.BOLD, 11, GOLD)); put(ea, rr); gap(ea, 6);
         }
         if (mine) put(ea, wide(ghost("Delete", () -> { S.posts.remove(po); save(); show("Feed"); })));
         else {

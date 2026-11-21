@@ -42,6 +42,22 @@ public class GroupCalls {
     static final long LIVE_TTL = 14_000;                // someone counts as "in the call" until we have not heard from them for this long
     static final String SYS = "\u0001";                    // marks a chat line that is a notice, not typed text
 
+    /** Fast lookup table for groups by id, rebuilt when S.groups changes. */
+    static final Map<Integer, Group> GROUPS_BY_ID = new HashMap<>();
+    static int cachedGroupsObj = 0;
+    static void rebuildGroupsById() {
+        if (S != null && S.groups != null) {
+            GROUPS_BY_ID.clear();
+            for (Group g : S.groups) GROUPS_BY_ID.put(g.id, g);
+            cachedGroupsObj = S.groups.size();
+        }
+    }
+    static Group groupById(int id) {
+        if (S == null || S.groups == null) return null;
+        if (cachedGroupsObj != S.groups.size()) { rebuildGroupsById(); }
+        return GROUPS_BY_ID.get(id);
+    }
+
     static class Peer { final String user; final CallLink link; final Tile tile; Peer(String u, CallLink l, Tile t) { user = u; link = l; tile = t; } }
 
     static boolean active, starter, ringSent, sawEstablished, everHadPeers, camOn, muted, handUp, joinedLive, heardAny;
@@ -137,6 +153,13 @@ public class GroupCalls {
         joinedLive = running;                                                                   // a call is already running: join it quietly instead of ringing everybody
         startedAt = System.currentTimeMillis(); peers.clear(); connecting.clear(); links.clear();
         mine = new Tile(me.username, name(me), true);
+        User mu = S.users.get(me.username);
+        if (mu != null && mu.photo != null) {
+            try {
+                BufferedImage im = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(mu.photo));
+                if (im != null) mine.photo = im;
+            } catch (Exception e) { /* ignore */ }
+        }
         win = new GroupCallWindow(g, me.username, ACTIONS); win.addTile(mine); win.setMode(Mode.ACTIVE, joinedLive ? "Joining the call..." : "Looking for the others..."); win.open();
         final String tk = ticket; Thread t = new Thread(() -> acceptLoop(mineSock, tk), "gcall-accept"); t.setDaemon(true); t.start();
         audio = new Audio();
@@ -185,7 +208,7 @@ public class GroupCalls {
         int colon = s.callId.indexOf(':'); if (colon < 2) return;
         final int gid; try { gid = Integer.parseInt(s.callId.substring(1, colon)); } catch (NumberFormatException e) { return; }
         final String tk = s.callId.substring(colon + 1);
-        Group g = null; for (Group x : S.groups) if (x.id == gid) g = x;
+        Group g = groupById(gid);
         if (g == null || !g.has(me.username) || !g.has(s.from)) return;                       // members only
         boolean here = active && group.id == gid;
         switch (s.kind) {
@@ -251,7 +274,15 @@ public class GroupCalls {
 
     static void addPeer(final String user, Socket c) {
         final CallLink l; try { l = new CallLink(c); } catch (IOException e) { close(c); return; }
-        final Tile t = new Tile(user, name(user), false); final Peer p = new Peer(user, l, t);
+        final Tile t = new Tile(user, name(user), false);
+        User u = S.users.get(user);
+        if (u != null && u.photo != null) {
+            try {
+                BufferedImage im = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(u.photo));
+                if (im != null) t.photo = im;
+            } catch (Exception e) { /* ignore */ }
+        }
+        final Peer p = new Peer(user, l, t);
         l.onVideo = jpeg -> { BufferedImage im = Calls.decode(jpeg); GroupCallWindow w = win; if (im != null) { t.img = im; if (w != null) w.repaintStage(); } };
         l.onAudio = b -> { Audio a = audio; if (a != null) a.play(user, b); if (Audio.rms(b) > 700) t.speakUntil = System.currentTimeMillis() + 500; };
         l.onCam = on -> { t.cam = on; GroupCallWindow w = win; if (w != null) w.repaintStage(); };

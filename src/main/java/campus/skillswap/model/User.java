@@ -12,6 +12,10 @@ public class User implements java.io.Serializable {
     public int credits = 5;
     /** Profile picture: a small square JPEG (about 256 px), or null to show the coloured initial. */
     public byte[] photo;
+    /** Nickname for this user in group chats (null = use normal name). */
+    public String nickname;
+    /** Personal nicknames for people in group chats, keyed by group id + ':' + username. Only the owner sees them. */
+    public Map<String, String> gcNicknames = new LinkedHashMap<>();
     /** Epoch millis of the last heartbeat from this user's app (0 = signed out). Not part of the row fingerprint. */
     public long lastSeen;
     /** Campus moderator: can review reports and ban accounts. */

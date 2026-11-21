@@ -207,14 +207,21 @@ public class Calls {
             default: break;
         }
     }
+    static PreparedStatement sigInsertPs, sigDeletePs;
     static void sendSig(String kind, String to, String id, String host, int port, boolean vid) {
         CallSig s = new CallSig(); s.callId = id; s.from = me.username; s.to = to; s.kind = kind; s.host = host; s.port = port; s.video = vid; s.ts = System.currentTimeMillis();
         if (LanSync.active()) { LanSync.signal(s); return; }
         if (db == null) return;
-        try (PreparedStatement p = db.prepareStatement("INSERT INTO call_signals(call_id,from_user,to_user,kind,host,port,video,ts) VALUES(?,?,?,?,?,?,?,?)")) {
-            p.setString(1, id); p.setString(2, s.from); p.setString(3, to); p.setString(4, kind); p.setString(5, host); p.setInt(6, port); p.setBoolean(7, vid); p.setLong(8, s.ts); p.executeUpdate();
+        try {
+            if (sigInsertPs == null || sigInsertPs.getConnection().isClosed()) sigInsertPs = db.prepareStatement("INSERT INTO call_signals(call_id,from_user,to_user,kind,host,port,video,ts) VALUES(?,?,?,?,?,?,?,?)");
+            sigInsertPs.setString(1, id); sigInsertPs.setString(2, s.from); sigInsertPs.setString(3, to); sigInsertPs.setString(4, kind); sigInsertPs.setString(5, host); sigInsertPs.setInt(6, port); sigInsertPs.setBoolean(7, vid); sigInsertPs.setLong(8, s.ts); sigInsertPs.executeUpdate();
         } catch (SQLException e) { toast("Call signal failed: " + nz(e.getMessage()).split("\n")[0]); }
-        if (kind.equals("INVITE") || kind.equals("GJOIN")) try (PreparedStatement d = db.prepareStatement("DELETE FROM call_signals WHERE ts<?")) { d.setLong(1, System.currentTimeMillis() - 600_000); d.executeUpdate(); } catch (SQLException e) { }
+        if (kind.equals("INVITE") || kind.equals("GJOIN")) {
+            try {
+                if (sigDeletePs == null || sigDeletePs.getConnection().isClosed()) sigDeletePs = db.prepareStatement("DELETE FROM call_signals WHERE ts<?");
+                sigDeletePs.setLong(1, System.currentTimeMillis() - 600_000); sigDeletePs.executeUpdate();
+            } catch (SQLException e) { }
+        }
     }
 
     // ---- database mode: look for new setup messages every second

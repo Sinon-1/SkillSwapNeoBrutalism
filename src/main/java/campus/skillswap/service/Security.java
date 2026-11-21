@@ -53,8 +53,11 @@ import static campus.skillswap.ui.media.Reels.*;
 public class Security {
 
     public static String hash(String user, String pw) {
-        try { byte[] d = MessageDigest.getInstance("SHA-256").digest((user + ":" + pw).getBytes("UTF-8"));
-            StringBuilder sb = new StringBuilder(); for (byte b : d) sb.append(String.format("%02x", b)); return sb.toString();
+        try {
+            byte[] d = MessageDigest.getInstance("SHA-256").digest((user + ":" + pw).getBytes("UTF-8"));
+            StringBuilder sb = new StringBuilder(64);
+            for (byte b : d) { int v = b & 0xFF; sb.append("0123456789abcdef".charAt(v >>> 4)); sb.append("0123456789abcdef".charAt(v & 0x0F)); }
+            return sb.toString();
         } catch (Exception e) { return pw; }
     }
 }

@@ -10,6 +10,8 @@ public class Group implements java.io.Serializable {
     private static final long serialVersionUID = 1L;
     public static final String PREFIX = "g:";
     public int id; public String name = "", creator = ""; public long created;
+    /** Optional group profile photo: a square JPEG, or null to show the drawn group avatar. */
+    public byte[] photo;
     public List<String> members = new ArrayList<>();
 
     public String key() { return PREFIX + id; }

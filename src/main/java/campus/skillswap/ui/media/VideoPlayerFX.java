@@ -55,6 +55,9 @@ public class VideoPlayerFX {
     /** Remembered between videos, so muting one reel keeps the next one muted (like Instagram / Facebook). */
     static double volume = 1.0; static boolean muted = false;
 
+    /** Starts JavaFX once while the feed is idle, so the first tap does not wait for toolkit startup. */
+    public static void prewarm() { new JFXPanel(); Platform.setImplicitExit(false); }
+
     /** Autoplaying, looping video with Meta-style controls (see Controls below). */
     public static JComponent create(File f, int w, int h) { return create(f, w, h, msg -> { }, false, null); }
     /** Same, but on a playback error calls onFail(reason) on the Swing thread instead of switching to another app. */
@@ -65,16 +68,40 @@ public class VideoPlayerFX {
         JFXPanel panel = new JFXPanel();                 // also starts the JavaFX runtime
         Platform.setImplicitExit(false);
         panel.setPreferredSize(new Dimension(w, h));
+        // A closed player must not finish starting up in the background: that used to leave stray players
+        // running (and eventually made later videos fail). "dead" tells the setup below to give up.
+        final java.util.concurrent.atomic.AtomicBoolean dead = new java.util.concurrent.atomic.AtomicBoolean(false);
+        panel.putClientProperty("dead", dead);
+        // Stopping/disposing a player can itself raise a media error. Ignore those after the player was closed,
+        // otherwise closing or replacing a video shows a false "can't play" message.
+        java.util.function.Consumer<String> report = msg -> {
+            if (dead.get()) return;
+            SwingUtilities.invokeLater(() -> { if (!dead.get()) onFail.accept(msg); });
+        };
         Platform.runLater(() -> {
+            MediaPlayer[] holder = new MediaPlayer[1];
+            // A damaged file can leave JavaFX stuck between "created" and "ready" forever. Report that instead of
+            // leaving a black player with no explanation.
+            final PauseTransition startup = new PauseTransition(Duration.seconds(20));
+            startup.setOnFinished(e -> {
+                MediaPlayer mp = holder[0];
+                if (dead.get() || mp == null) return;
+                MediaPlayer.Status st = mp.getStatus();
+                if (st != MediaPlayer.Status.READY && st != MediaPlayer.Status.PLAYING
+                        && st != MediaPlayer.Status.PAUSED && st != MediaPlayer.Status.STALLED)
+                    report.accept("The video player did not start within 20 seconds. The file may be damaged or the drive may be too slow.");
+            });
             try {
+                if (dead.get()) { startup.stop(); return; }
                 Media media = new Media(f.toURI().toString());
-                MediaPlayer mp = new MediaPlayer(media);
+                media.setOnError(() -> { startup.stop(); report.accept(String.valueOf(media.getError())); });
+                MediaPlayer mp = new MediaPlayer(media); holder[0] = mp;
+                mp.setOnError(() -> { startup.stop(); report.accept(String.valueOf(mp.getError())); });
+                mp.setOnReady(startup::stop);
                 mp.setCycleCount(MediaPlayer.INDEFINITE);
                 mp.setAutoPlay(true);
                 boolean m0 = startMuted || muted;
                 mp.setVolume(volume); mp.setMute(m0);
-                media.setOnError(() -> { String m = String.valueOf(media.getError()); SwingUtilities.invokeLater(() -> onFail.accept(m)); });
-                mp.setOnError(() -> { String m = String.valueOf(mp.getError()); SwingUtilities.invokeLater(() -> onFail.accept(m)); });
                 MediaView mv = new MediaView(mp);
                 mv.setPreserveRatio(true);
                 mv.setFitWidth(w);
@@ -84,8 +111,13 @@ public class VideoPlayerFX {
                 panel.setScene(new Scene(c.root, w, h, Color.BLACK));
                 panel.putClientProperty("mp", mp);
                 panel.putClientProperty("ctl", c);
+                if (dead.get()) { startup.stop(); mp.stop(); mp.dispose(); }
+                else startup.play();
             } catch (Throwable t) {
-                SwingUtilities.invokeLater(() -> onFail.accept(String.valueOf(t)));
+                startup.stop();
+                MediaPlayer mp = holder[0];
+                if (mp != null) { try { mp.stop(); mp.dispose(); } catch (Throwable ignored) { } }
+                report.accept(String.valueOf(t));
             }
         });
         return panel;
@@ -139,13 +171,15 @@ public class VideoPlayerFX {
         final double u;   // button size
 
         Controls(MediaPlayer mp, MediaView mv, double w, double h, boolean startMuted, Runnable onFullscreen) {
-            this.mp = mp; this.w = w; this.h = h; m = startMuted; u = h < 420 ? 28 : 32;
+            this.mp = mp; this.w = w; this.h = h; m = startMuted;
+            boolean small = h < 300;                         // inline feed player: keep controls from covering the picture
+            u = small ? 24 : h < 420 ? 28 : 32;
             hit.setStyle("-fx-background-color: transparent;"); hit.setCursor(Cursor.HAND);
             fb = new StackPane(); fb.setMouseTransparent(true);
             badge.setVisible(false); badge.setMouseTransparent(true); StackPane.setAlignment(badge, Pos.TOP_CENTER); StackPane.setMargin(badge, new Insets(14, 0, 0, 0));
             mini.setFill(PINK); mini.setMouseTransparent(true); StackPane.setAlignment(mini, Pos.BOTTOM_LEFT); mini.setVisible(false);
 
-            seek = new Bar(w - 28, 16, r -> { double t = total(); if (t > 0) { mp.seek(Duration.seconds(r * t)); setTime(r * t, t); } }, d -> { dragging = d; if (!d) restartHide(); });
+            seek = new Bar(w - (small ? 20 : 28), small ? 12 : 16, r -> { double t = total(); if (t > 0) { mp.seek(Duration.seconds(r * t)); setTime(r * t, t); } }, d -> { dragging = d; if (!d) restartHide(); });
             ppBtn = btn(playShape(u * 0.42), u, null); ppBtn.setOnMouseClicked(e -> { toggle(false); e.consume(); });
             time.setFill(Color.WHITE); time.setFont(Font.font("System", FontWeight.BOLD, 12));
             Region sp = new Region(); HBox.setHgrow(sp, Priority.ALWAYS);
@@ -154,7 +188,9 @@ public class VideoPlayerFX {
             speed.setCursor(Cursor.HAND); speed.setOnMouseClicked(e -> { cycleSpeed(); e.consume(); }); speed.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
             muteBtn = btn(speakerShape(m || volume == 0), u, this::toggleMute);
             HBox row = new HBox(8, ppBtn, time, sp, speed); if (onFullscreen != null) row.getChildren().add(btn(fullShape(u * 0.5), u, onFullscreen)); row.getChildren().add(muteBtn); row.setAlignment(Pos.CENTER_LEFT);
-            bar.getChildren().addAll(row, seek); bar.setPadding(new Insets(36, 14, 6, 14)); bar.setAlignment(Pos.BOTTOM_LEFT);
+            bar.getChildren().addAll(row, seek);
+            bar.setPadding(new Insets(small ? 18 : 36, small ? 10 : 14, small ? 4 : 6, small ? 10 : 14));
+            bar.setAlignment(Pos.BOTTOM_LEFT);
             bar.setStyle("-fx-background-color: linear-gradient(to top, rgba(0,0,0,0.70), rgba(0,0,0,0));");
             bar.setMaxHeight(Region.USE_PREF_SIZE); StackPane.setAlignment(bar, Pos.BOTTOM_CENTER);
             fade = new FadeTransition(Duration.millis(180), bar);
@@ -288,26 +324,36 @@ public class VideoPlayerFX {
         new JFXPanel();                                   // starts the JavaFX runtime
         Platform.setImplicitExit(false);
         final BufferedImage[] out = new BufferedImage[1]; final CountDownLatch done = new CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicBoolean finished = new java.util.concurrent.atomic.AtomicBoolean(false);
+        final MediaPlayer[] holder = new MediaPlayer[1];
         Platform.runLater(() -> {
             try {
-                MediaPlayer mp = new MediaPlayer(new Media(f.toURI().toString())); mp.setMute(true);
+                MediaPlayer mp = new MediaPlayer(new Media(f.toURI().toString())); holder[0] = mp; mp.setMute(true);
                 MediaView mv = new MediaView(mp); mv.setPreserveRatio(true); mv.setFitWidth(w); mv.setFitHeight(h);
                 StackPane root = new StackPane(mv); new Scene(root, w, h, Color.BLACK);
                 final boolean[] taken = new boolean[1];
                 mp.currentTimeProperty().addListener((obs, o, n) -> {
                     if (taken[0] || n.toSeconds() < 0.3) return; taken[0] = true; mp.pause();
                     try { WritableImage img = root.snapshot(null, null); out[0] = SwingFXUtils.fromFXImage(img, null); } catch (Throwable t) { /* no frame */ }
-                    mp.dispose(); done.countDown();
+                    mp.dispose(); if (finished.compareAndSet(false, true)) done.countDown();
                 });
-                mp.setOnError(() -> done.countDown());
+                mp.setOnError(() -> { try { mp.dispose(); } catch (Throwable ignored) { } if (finished.compareAndSet(false, true)) done.countDown(); });
                 mp.play();
-            } catch (Throwable t) { done.countDown(); }
+            } catch (Throwable t) {
+                MediaPlayer mp = holder[0]; if (mp != null) { try { mp.dispose(); } catch (Throwable ignored) { } }
+                if (finished.compareAndSet(false, true)) done.countDown();
+            }
         });
         try { done.await(10, TimeUnit.SECONDS); } catch (InterruptedException e) { /* give up */ }
+        if (finished.compareAndSet(false, true)) {                 // timed out: release the player we started
+            Platform.runLater(() -> { MediaPlayer mp = holder[0]; if (mp != null) { try { mp.stop(); mp.dispose(); } catch (Throwable ignored) { } } });
+        }
         return out[0];
     }
 
     public static void stop(JComponent c) {
+        Object d = c.getClientProperty("dead");
+        if (d instanceof java.util.concurrent.atomic.AtomicBoolean) ((java.util.concurrent.atomic.AtomicBoolean) d).set(true);
         Platform.runLater(() -> {
             Object mp = c.getClientProperty("mp");
             if (mp instanceof MediaPlayer) { ((MediaPlayer) mp).stop(); ((MediaPlayer) mp).dispose(); }

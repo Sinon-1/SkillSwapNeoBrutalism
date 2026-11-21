@@ -5,6 +5,7 @@ rem Without it, reels open in your default video player and previews need ffmpeg
 cd /d "%~dp0\.."
 if exist out rmdir /s /q out
 mkdir out
+if exist src\main\resources xcopy /s /y /i src\main\resources out\ >nul
 if exist lib\javafx-sdk\lib (
   dir /s /b src\*.java > out\sources.txt
   javac --module-path lib\javafx-sdk\lib --add-modules javafx.media,javafx.swing -d out @out\sources.txt || exit /b 1

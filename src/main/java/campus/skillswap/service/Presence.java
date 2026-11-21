@@ -46,12 +46,18 @@ public class Presence {
         write(me.username, 0, true);
     }
 
+    static PreparedStatement pstOffline, pstOnline;
     static void write(String user, long ts, boolean sync) {
         if (LanSync.active()) { LanSync.presence(user, ts, sync); return; }
         if (db == null) return;
-        try (PreparedStatement p = db.prepareStatement(ts == 0 ? "UPDATE users SET last_seen=0, nearby=FALSE WHERE username=?" : "UPDATE users SET last_seen=? WHERE username=?")) {
-            if (ts == 0) p.setString(1, user); else { p.setLong(1, ts); p.setString(2, user); }
-            p.executeUpdate();
+        try {
+            if (ts == 0) {
+                if (pstOffline == null || pstOffline.getConnection().isClosed()) pstOffline = db.prepareStatement("UPDATE users SET last_seen=0, nearby=FALSE WHERE username=?");
+                pstOffline.setString(1, user); pstOffline.executeUpdate();
+            } else {
+                if (pstOnline == null || pstOnline.getConnection().isClosed()) pstOnline = db.prepareStatement("UPDATE users SET last_seen=? WHERE username=?");
+                pstOnline.setLong(1, ts); pstOnline.setString(2, user); pstOnline.executeUpdate();
+            }
         } catch (SQLException e) { /* best effort: the next heartbeat retries */ }
     }
 

@@ -99,7 +99,7 @@ public class ModerationScreen {
     /** Rich read-only profile shown to moderators, with moderation actions in the footer. */
     public static void modProfile(User u) {
         if (u == null) return;
-        final JDialog d = new JDialog(frame, "Profile - " + name(u), true);
+        final JDialog d = new JDialog(frame, "Profile - " + name(u), true); iconify(d);
         JPanel outer = new JPanel(new BorderLayout()); outer.setBackground(BG); outer.setBorder(new EmptyBorder(14, 14, 10, 10));
         Card card = new Card(); card.setLayout(new BorderLayout());
         Color band = u.banned ? DANGER : u.moderator ? GREEN : YEL;
@@ -176,7 +176,7 @@ public class ModerationScreen {
 
     /** Explicit confirmation dialog before a ban. Returns the ban reason, or null when cancelled. */
     static String banReasonDialog(User u, String initialReason) {
-        final JDialog d = new JDialog(frame, "Confirm ban", true); final String[] out = {null};
+        final JDialog d = new JDialog(frame, "Confirm ban", true); iconify(d); final String[] out = {null};
         JPanel outer = new JPanel(new BorderLayout()); outer.setBackground(BG); outer.setBorder(new EmptyBorder(14, 14, 10, 10));
         Card card = new Card(); card.setLayout(new BorderLayout());
         JPanel head = new JPanel(); head.setLayout(new BoxLayout(head, BoxLayout.Y_AXIS)); head.setBackground(DANGER);

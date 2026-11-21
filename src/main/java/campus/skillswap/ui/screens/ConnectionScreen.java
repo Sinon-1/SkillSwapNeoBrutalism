@@ -158,6 +158,7 @@ public class ConnectionScreen {
         for (User ru : st.users.values()) { User cu = S.users.get(ru.username); if (cu != null && cu != me) cu.lastSeen = ru.lastSeen; }   // presence only: no full reload
         if (busy > 0 || videoOpen() || v != ver || fp.equals(snap)) { campus.skillswap.service.Presence.refresh(); return; }   // wait while a video is playing
         Map<Integer, String> old = new HashMap<>(); for (Sess s : S.sessions) old.put(s.id, s.status); long cutoff = lastMsgSeen;
+        Map<String, String> before = snap;
         S = st; snap = fp;
         if (me != null) {
             me = S.users.get(me.username); if (me == null) { rootCards.show(root, "login"); return; }
@@ -167,7 +168,31 @@ public class ConnectionScreen {
                 if (o == null && s.status.equals("PENDING") && !req) notifyUser("New swap request", name(s.requester) + " wants a " + s.skill + " session" + (s.videoCall ? " (video call requested)" : ""));
                 else if ("PENDING".equals(o) && req && s.status.equals("CONFIRMED")) notifyUser("Swap accepted", name(other(s)) + " accepted your " + s.skill + " session");
                 else if ("PENDING".equals(o) && req && s.status.equals("DECLINED")) notifyUser("Swap declined", name(other(s)) + " declined your " + s.skill + " request"); }
-            show(page);
+            // Only rebuild the page when something it actually shows changed. A chat message no longer
+            // resets the Skill Feed scroll position, and a new post no longer interrupts a chat.
+            if (pageChanged(page, before, fp)) show(page); else buildSidebar();
+        }
+    }
+    /** True when a remote change touches the data the given page displays (key prefixes: u=users, p=posts, s=sessions, m=messages, g=groups, r=reports). */
+    static boolean pageChanged(String pg, Map<String, String> a, Map<String, String> b) {
+        if (a == null) return true;
+        for (Map.Entry<String, String> e : b.entrySet()) if (pageUses(pg, e.getKey()) && !Objects.equals(a.get(e.getKey()), e.getValue())) return true;
+        for (String k : a.keySet()) if (pageUses(pg, k) && !b.containsKey(k)) return true;
+        return false;
+    }
+    static boolean pageUses(String pg, String key) {
+        if (key == null || key.length() < 2) return false;
+        char k = key.charAt(0);
+        switch (pg) {
+            case "Feed": return k == 'u' || k == 'p' || k == 's';
+            case "Search": return k == 'u' || k == 's';
+            case "Certs": return k == 'u' || k == 's';
+            case "Bookings": return k == 'u' || k == 's';
+            case "Nearby": return k == 'u';
+            case "Messages": return k == 'u' || k == 'm' || k == 'g';
+            case "Moderation": return k == 'u' || k == 'r';
+            case "Profile": return k == 'u' || k == 's';
+            default: return false;
         }
     }
     public static String netText() {

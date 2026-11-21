@@ -60,6 +60,7 @@ public class Database {
     public static int busy, localId = 1;                 // busy > 0 while a modal dialog is open (don't swap data underneath it)
     public static Map<String, String> snap = new HashMap<>();   // row fingerprints as last seen in the database
     public static ScheduledExecutorService poller;
+    static int pollFails;                                       // consecutive failed background refreshes
 
     public static final String[] DDL = {
         "CREATE SEQUENCE IF NOT EXISTS ss_id_seq",
@@ -78,7 +79,8 @@ public class Database {
         "CREATE TABLE IF NOT EXISTS posts(id INT PRIMARY KEY, author TEXT NOT NULL, post_type TEXT NOT NULL, skill TEXT NOT NULL,"
             + " category TEXT NOT NULL, descr TEXT NOT NULL, created BIGINT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS post_likes(post_id INT NOT NULL REFERENCES posts(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(post_id, username))",
-        "CREATE TABLE IF NOT EXISTS post_videos(post_id INT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE, file_name TEXT NOT NULL, size_bytes BIGINT NOT NULL, data BYTEA NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS post_videos(post_id INT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE, file_name TEXT NOT NULL, size_bytes BIGINT NOT NULL, updated_at BIGINT NOT NULL DEFAULT 0, data BYTEA NOT NULL)",
+        "ALTER TABLE post_videos ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0",
         "CREATE TABLE IF NOT EXISTS sessions(id INT PRIMARY KEY, teacher TEXT NOT NULL, learner TEXT NOT NULL, skill TEXT NOT NULL, sess_mode TEXT NOT NULL,"
             + " status TEXT NOT NULL, requester TEXT NOT NULL, review TEXT NOT NULL DEFAULT '', rating INT NOT NULL DEFAULT 0, starts_at TIMESTAMP NOT NULL)",
         "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS video_call BOOLEAN NOT NULL DEFAULT FALSE",
@@ -97,24 +99,53 @@ public class Database {
         "ALTER TABLE reports ADD COLUMN IF NOT EXISTS resolved BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE reports ADD COLUMN IF NOT EXISTS resolved_by TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE reports ADD COLUMN IF NOT EXISTS resolved_at BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname TEXT NOT NULL DEFAULT ''",
         "CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS call_signals(id BIGSERIAL PRIMARY KEY, call_id TEXT NOT NULL, from_user TEXT NOT NULL, to_user TEXT NOT NULL, kind TEXT NOT NULL,"
             + " host TEXT NOT NULL DEFAULT '', port INT NOT NULL DEFAULT 0, video BOOLEAN NOT NULL DEFAULT FALSE, ts BIGINT NOT NULL)",
         "CREATE INDEX IF NOT EXISTS idx_call_signals_to ON call_signals(to_user, id)",
         "CREATE TABLE IF NOT EXISTS chat_groups(id INT PRIMARY KEY, name TEXT NOT NULL, creator TEXT NOT NULL, created BIGINT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS chat_group_members(ord BIGSERIAL, group_id INT NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(group_id, username))"
+        "CREATE TABLE IF NOT EXISTS chat_group_members(ord BIGSERIAL, group_id INT NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(group_id, username))",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS gc_nicknames TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE chat_groups ADD COLUMN IF NOT EXISTS photo BYTEA"
     };
 
     public static String nz(String s) { return s == null ? "" : s; }
     public static String j(Object... a) { return Arrays.stream(a).map(String::valueOf).collect(Collectors.joining("\u0001")); }
 
+    /** Personal group nicknames live on the owner's user row, encoded as entries of "group:user\u0003nickname". */
+    public static String encodeGcNicknames(Map<String, String> m) {
+        if (m == null || m.isEmpty()) return "";
+        return m.entrySet().stream()
+            .filter(e -> e.getKey() != null && e.getValue() != null && !e.getValue().isEmpty())
+            .sorted(Map.Entry.comparingByKey())
+            .map(e -> e.getKey() + "\u0003" + e.getValue())
+            .collect(Collectors.joining("\u0002"));
+    }
+    public static Map<String, String> parseGcNicknames(String s) {
+        Map<String, String> m = new LinkedHashMap<>();
+        if (s == null || s.isEmpty()) return m;
+        for (String entry : s.split("\u0002")) {
+            int p = entry.indexOf('\u0003');
+            if (p > 0 && p + 1 < entry.length()) m.put(entry.substring(0, p), entry.substring(p + 1));
+        }
+        return m;
+    }
+    /** Field-only edits do not change collection sizes, so clear that fast path before saving. */
+    public static void saveEdit() { LAST_SIZES.clear(); save(); }
+
     public static Connection open(String host, String port, String name, String user, String pw) throws SQLException {
+        return open(host, port, name, user, pw, null);
+    }
+    /** Same, with extra JDBC URL options (for example connectTimeout/socketTimeout for video transfers). */
+    public static Connection open(String host, String port, String name, String user, String pw, String options) throws SQLException {
         String base = "jdbc:postgresql://" + host + ":" + port + "/";
-        try { return DriverManager.getConnection(base + name, user, pw); }
+        String url = base + name + (options == null || options.isEmpty() ? "" : "?" + options);
+        try { return DriverManager.getConnection(url, user, pw); }
         catch (SQLException e) {
             if (!"3D000".equals(e.getSQLState()) || !name.matches("\\w+")) throw e;     // 3D000 = database does not exist yet -> create it
-            try (Connection a = DriverManager.getConnection(base + "postgres", user, pw); Statement s = a.createStatement()) { s.execute("CREATE DATABASE " + name); }
-            return DriverManager.getConnection(base + name, user, pw);
+            try (Connection a = DriverManager.getConnection(base + "postgres" + (options == null || options.isEmpty() ? "" : "?" + options), user, pw); Statement s = a.createStatement()) { s.execute("CREATE DATABASE " + name); }
+            return DriverManager.getConnection(url, user, pw);
         }
     }
     public static void closeDb() {
@@ -134,25 +165,26 @@ public class Database {
         synchronized (RL) {
             Store st = new Store();
             try (Statement s = dbRead.createStatement()) {
-                try (ResultSet r = s.executeQuery("SELECT username,real_name,email,pass_hash,bio,use_real_name,public_ratings,nearby,demo,credits,last_seen,photo,moderator,banned,ban_reason,banned_by,banned_at FROM users ORDER BY ord")) {
+                try (ResultSet r = s.executeQuery("SELECT username,real_name,email,pass_hash,bio,use_real_name,public_ratings,nearby,demo,credits,last_seen,photo,moderator,banned,ban_reason,banned_by,banned_at,nickname,gc_nicknames FROM users ORDER BY ord")) {
                     while (r.next()) { User u = new User(); u.username = r.getString(1); u.realName = nz(r.getString(2)); u.email = r.getString(3); u.passHash = r.getString(4); u.bio = nz(r.getString(5));
                         u.useRealName = r.getBoolean(6); u.publicRatings = r.getBoolean(7); u.nearby = r.getBoolean(8); u.demo = r.getBoolean(9); u.credits = r.getInt(10); u.lastSeen = r.getLong(11); u.photo = r.getBytes(12);
-                        u.moderator = r.getBoolean(13); u.banned = r.getBoolean(14); u.banReason = nz(r.getString(15)); u.bannedBy = nz(r.getString(16)); u.bannedAt = r.getLong(17); st.users.put(u.username, u); } }
+                        u.moderator = r.getBoolean(13); u.banned = r.getBoolean(14); u.banReason = nz(r.getString(15)); u.bannedBy = nz(r.getString(16)); u.bannedAt = r.getLong(17); u.nickname = nz(r.getString(18));
+                        u.gcNicknames = parseGcNicknames(r.getString(19)); st.users.put(u.username, u); } }
                 try (ResultSet r = s.executeQuery("SELECT username,kind,skill FROM user_skills ORDER BY ord")) {
                     while (r.next()) { User u = st.users.get(r.getString(1)); if (u != null) (r.getString(2).equals("T") ? u.teach : u.learn).add(r.getString(3)); } }
                 try (ResultSet r = s.executeQuery("SELECT id,author,post_type,skill,category,descr,created FROM posts ORDER BY id")) {
                     while (r.next()) { Post p = new Post(); p.id = r.getInt(1); p.author = r.getString(2); p.type = r.getString(3); p.skill = r.getString(4); p.category = r.getString(5); p.desc = r.getString(6); p.time = r.getLong(7); st.posts.add(p); } }
                 Map<Integer, Post> pm = new HashMap<>(); for (Post p : st.posts) pm.put(p.id, p);
                 try (ResultSet r = s.executeQuery("SELECT post_id,username FROM post_likes")) { while (r.next()) { Post p = pm.get(r.getInt(1)); if (p != null) p.likes.add(r.getString(2)); } }
-                try (ResultSet r = s.executeQuery("SELECT post_id,file_name,size_bytes FROM post_videos")) { while (r.next()) { Post p = pm.get(r.getInt(1)); if (p != null) { p.videoName = r.getString(2); p.videoSize = r.getLong(3); } } }
+                try (ResultSet r = s.executeQuery("SELECT post_id,file_name,size_bytes,updated_at FROM post_videos")) { while (r.next()) { Post p = pm.get(r.getInt(1)); if (p != null) { p.videoName = r.getString(2); p.videoSize = r.getLong(3); p.videoStamp = r.getLong(4); } } }
                 try (ResultSet r = s.executeQuery("SELECT id,teacher,learner,skill,sess_mode,status,requester,review,rating,starts_at,video_call FROM sessions ORDER BY id")) {
                     while (r.next()) { Sess x = new Sess(); x.id = r.getInt(1); x.teacher = r.getString(2); x.learner = r.getString(3); x.skill = r.getString(4); x.mode = r.getString(5); x.status = r.getString(6);
                         x.requester = r.getString(7); x.review = nz(r.getString(8)); x.rating = r.getInt(9); x.at = r.getTimestamp(10).toLocalDateTime(); x.videoCall = r.getBoolean(11); st.sessions.add(x); } }
                 try (ResultSet r = s.executeQuery("SELECT id,from_user,to_user,body,created,edited,deleted,hidden_by,file_name,file_kind,file_mime,file_size FROM messages ORDER BY created,id")) {
                     while (r.next()) { Msg m = new Msg(); m.id = r.getInt(1); m.from = r.getString(2); m.to = r.getString(3); m.text = r.getString(4); m.time = r.getLong(5); m.edited = r.getBoolean(6); m.deleted = r.getBoolean(7); m.hiddenBy = nz(r.getString(8));
                         m.fileName = nz(r.getString(9)); m.fileKind = nz(r.getString(10)); m.fileMime = nz(r.getString(11)); m.fileSize = r.getLong(12); st.msgs.add(m); } }
-                try (ResultSet r = s.executeQuery("SELECT id,name,creator,created FROM chat_groups ORDER BY id")) {
-                    while (r.next()) { Group g = new Group(); g.id = r.getInt(1); g.name = nz(r.getString(2)); g.creator = nz(r.getString(3)); g.created = r.getLong(4); st.groups.add(g); } }
+                try (ResultSet r = s.executeQuery("SELECT id,name,creator,created,photo FROM chat_groups ORDER BY id")) {
+                    while (r.next()) { Group g = new Group(); g.id = r.getInt(1); g.name = nz(r.getString(2)); g.creator = nz(r.getString(3)); g.created = r.getLong(4); g.photo = r.getBytes(5); st.groups.add(g); } }
                 Map<Integer, Group> gm = new HashMap<>(); for (Group g : st.groups) gm.put(g.id, g);
                 try (ResultSet r = s.executeQuery("SELECT group_id,username FROM chat_group_members ORDER BY ord")) { while (r.next()) { Group g = gm.get(r.getInt(1)); if (g != null) g.members.add(r.getString(2)); } }
                 try (ResultSet r = s.executeQuery("SELECT id,by_user,target,reason,details,created,resolved,resolved_by,resolved_at FROM reports ORDER BY id")) {
@@ -167,20 +199,35 @@ public class Database {
     /** One short fingerprint per row; save() only writes rows whose fingerprint changed, so two clients rarely overwrite each other. */
     public static Map<String, String> fingerprints(Store st) {
         Map<String, String> m = new HashMap<>();
-        for (User u : st.users.values()) m.put("u:" + u.username, j(nz(u.realName), u.email, u.passHash, nz(u.bio), u.useRealName, u.publicRatings, u.nearby, u.demo, u.credits, u.photo == null ? 0 : Arrays.hashCode(u.photo), String.join("\u0002", u.teach), String.join("\u0002", u.learn), u.moderator, u.banned, nz(u.banReason), nz(u.bannedBy), u.bannedAt));
+        for (User u : st.users.values()) m.put("u:" + u.username, j(nz(u.realName), u.email, u.passHash, nz(u.bio), u.useRealName, u.publicRatings, u.nearby, u.demo, u.credits, u.photo == null ? 0 : Arrays.hashCode(u.photo), String.join("\u0002", u.teach), String.join("\u0002", u.learn), u.moderator, u.banned, nz(u.banReason), nz(u.bannedBy), u.bannedAt, nz(u.nickname), encodeGcNicknames(u.gcNicknames)));
         for (Post p : st.posts) m.put("p:" + p.id, pfp(p));
         for (Sess s : st.sessions) m.put("s:" + s.id, j(s.teacher, s.learner, s.skill, s.mode, s.status, s.requester, nz(s.review), s.rating, s.at.truncatedTo(ChronoUnit.SECONDS), s.videoCall));
         for (Msg x : st.msgs) m.put("m:" + x.id, j(x.text, x.edited, x.deleted, nz(x.hiddenBy), nz(x.fileName), nz(x.fileKind), nz(x.fileMime), x.fileSize));
         for (Report x : st.reports) m.put("r:" + x.id, j(x.by, x.target, x.reason, nz(x.details), x.time, x.resolved, nz(x.resolvedBy), x.resolvedAt));
-        for (Group g : st.groups) m.put("g:" + g.id, j(g.name, g.creator, String.join("\u0002", g.members)));
+        for (Group g : st.groups) m.put("g:" + g.id, j(g.name, g.creator, String.join("\u0002", g.members), g.photo == null ? 0 : Arrays.hashCode(g.photo)));
         m.put("meta:sync", st.lastSync);
         return m;
     }
-    public static String pfp(Post p) { return j(p.author, p.type, p.skill, p.category, p.desc, p.time, new TreeSet<>(p.likes), nz(p.videoName), p.videoSize); }
+    public static String pfp(Post p) { return j(p.author, p.type, p.skill, p.category, p.desc, p.time, new TreeSet<>(p.likes), nz(p.videoName), p.videoSize, p.videoStamp); }
     public static boolean chg(String k, Map<String, String> now) { return !now.get(k).equals(snap.get(k)); }
+    /** Fast-path: if collection sizes are unchanged since last save, skip the fingerprint walk. */
+    static final Map<String, Integer> LAST_SIZES = new HashMap<>();
+    static boolean sizesChanged() {
+        if (S == null) return false;
+        return S.msgs.size() != LAST_SIZES.getOrDefault("msgs", -1)
+            || S.posts.size() != LAST_SIZES.getOrDefault("posts", -1)
+            || S.sessions.size() != LAST_SIZES.getOrDefault("sessions", -1)
+            || S.users.size() != LAST_SIZES.getOrDefault("users", -1)
+            || S.reports.size() != LAST_SIZES.getOrDefault("reports", -1)
+            || S.groups.size() != LAST_SIZES.getOrDefault("groups", -1);
+    }
     public static void save() {
         if (LanSync.active()) { LanSync.save(); return; }
         if (db == null) return;
+        if (snap != null && !sizesChanged()) return;   // nothing added/removed: skip fingerprint walk entirely
+        LAST_SIZES.put("msgs", S.msgs.size()); LAST_SIZES.put("posts", S.posts.size());
+        LAST_SIZES.put("sessions", S.sessions.size()); LAST_SIZES.put("users", S.users.size());
+        LAST_SIZES.put("reports", S.reports.size()); LAST_SIZES.put("groups", S.groups.size());
         ver++; Map<String, String> now = fingerprints(S);
         try {
             db.setAutoCommit(false);
@@ -200,13 +247,14 @@ public class Database {
         } catch (SQLException e) { toast("Database error: " + nz(e.getMessage()).split("\n")[0]); }
     }
     public static void writeUser(User u) throws SQLException {
-        try (PreparedStatement p = db.prepareStatement("INSERT INTO users(username,real_name,email,pass_hash,bio,use_real_name,public_ratings,nearby,demo,credits,photo,moderator,banned,ban_reason,banned_by,banned_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        try (PreparedStatement p = db.prepareStatement("INSERT INTO users(username,real_name,email,pass_hash,bio,use_real_name,public_ratings,nearby,demo,credits,photo,moderator,banned,ban_reason,banned_by,banned_at,nickname,gc_nicknames) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 + "ON CONFLICT(username) DO UPDATE SET real_name=EXCLUDED.real_name,email=EXCLUDED.email,pass_hash=EXCLUDED.pass_hash,bio=EXCLUDED.bio,use_real_name=EXCLUDED.use_real_name,"
                 + "public_ratings=EXCLUDED.public_ratings,nearby=EXCLUDED.nearby,demo=EXCLUDED.demo,credits=EXCLUDED.credits,photo=EXCLUDED.photo,moderator=EXCLUDED.moderator,"
-                + "banned=EXCLUDED.banned,ban_reason=EXCLUDED.ban_reason,banned_by=EXCLUDED.banned_by,banned_at=EXCLUDED.banned_at")) {
+                + "banned=EXCLUDED.banned,ban_reason=EXCLUDED.ban_reason,banned_by=EXCLUDED.banned_by,banned_at=EXCLUDED.banned_at,nickname=EXCLUDED.nickname,gc_nicknames=EXCLUDED.gc_nicknames")) {
             p.setString(1, u.username); p.setString(2, nz(u.realName)); p.setString(3, u.email); p.setString(4, u.passHash); p.setString(5, nz(u.bio)); p.setBoolean(6, u.useRealName);
             p.setBoolean(7, u.publicRatings); p.setBoolean(8, u.nearby); p.setBoolean(9, u.demo); p.setInt(10, u.credits); p.setBytes(11, u.photo);
-            p.setBoolean(12, u.moderator); p.setBoolean(13, u.banned); p.setString(14, nz(u.banReason)); p.setString(15, nz(u.bannedBy)); p.setLong(16, u.bannedAt); p.executeUpdate();
+            p.setBoolean(12, u.moderator); p.setBoolean(13, u.banned); p.setString(14, nz(u.banReason)); p.setString(15, nz(u.bannedBy)); p.setLong(16, u.bannedAt); p.setString(17, nz(u.nickname));
+            p.setString(18, encodeGcNicknames(u.gcNicknames)); p.executeUpdate();
         }
         try (PreparedStatement d = db.prepareStatement("DELETE FROM user_skills WHERE username=?")) { d.setString(1, u.username); d.executeUpdate(); }
         try (PreparedStatement p = db.prepareStatement("INSERT INTO user_skills(username,kind,skill) VALUES(?,?,?) ON CONFLICT DO NOTHING")) {
@@ -241,8 +289,8 @@ public class Database {
         }
     }
     public static void writeGroup(Group g) throws SQLException {
-        try (PreparedStatement p = db.prepareStatement("INSERT INTO chat_groups(id,name,creator,created) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,creator=EXCLUDED.creator")) {
-            p.setInt(1, g.id); p.setString(2, g.name); p.setString(3, g.creator); p.setLong(4, g.created); p.executeUpdate();
+        try (PreparedStatement p = db.prepareStatement("INSERT INTO chat_groups(id,name,creator,created,photo) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,creator=EXCLUDED.creator,photo=EXCLUDED.photo")) {
+            p.setInt(1, g.id); p.setString(2, g.name); p.setString(3, g.creator); p.setLong(4, g.created); p.setBytes(5, g.photo); p.executeUpdate();
         }
         try (PreparedStatement d = db.prepareStatement("DELETE FROM chat_group_members WHERE group_id=?")) { d.setInt(1, g.id); d.executeUpdate(); }
         try (PreparedStatement p = db.prepareStatement("INSERT INTO chat_group_members(group_id,username) VALUES(?,?) ON CONFLICT DO NOTHING")) {
@@ -283,6 +331,17 @@ public class Database {
             if (oldName.equals(g.creator)) g.creator = newName;
             for (int i = 0; i < g.members.size(); i++) if (oldName.equals(g.members.get(i))) g.members.set(i, newName);
         }
+        List<User> nickOwners = new ArrayList<>();
+        for (User owner : S.users.values()) {
+            if (owner.gcNicknames == null || owner.gcNicknames.isEmpty()) continue;
+            Map<String, String> fixed = new LinkedHashMap<>(); boolean hit = false;
+            for (Map.Entry<String, String> e : owner.gcNicknames.entrySet()) {
+                String k = e.getKey(), nk = k; int sep = k.lastIndexOf(':');
+                if (sep >= 0 && k.substring(sep + 1).equals(oldName)) { nk = k.substring(0, sep + 1) + newName; hit = true; }
+                fixed.put(nk, e.getValue());
+            }
+            if (hit) { owner.gcNicknames = fixed; nickOwners.add(owner); }
+        }
         if (LanSync.active()) { save(); return; }   // deltas carry the renamed rows and the removed old user
         if (db == null) return;
         try {
@@ -311,6 +370,7 @@ public class Database {
                 }
                 try (PreparedStatement d = db.prepareStatement("DELETE FROM users WHERE username=?")) { d.setString(1, oldName); d.executeUpdate(); }
                 writeUser(u);
+                for (User owner : nickOwners) if (owner != u) writeUser(owner);
                 db.commit();
             } catch (SQLException e) { db.rollback(); throw e; }
             finally { db.setAutoCommit(true); }
@@ -340,7 +400,14 @@ public class Database {
         if (poller != null) return;
         poller = Executors.newSingleThreadScheduledExecutor(r -> { Thread t = new Thread(r, "db-poll"); t.setDaemon(true); return t; });
         poller.scheduleWithFixedDelay(() -> {
-            try { if (dbRead == null) return; int v = ver; Store st = fetch(); Map<String, String> fp = fingerprints(st); SwingUtilities.invokeLater(() -> applyRemote(st, fp, v)); }
-            catch (Exception e) { /* connection hiccup: try again next tick */ } }, 3, 3, TimeUnit.SECONDS);
+            try {
+                if (dbRead == null || me == null) return;        // nobody signed in: no need to load the whole database every 3 s
+                int v = ver; Store st = fetch(); Map<String, String> fp = fingerprints(st);
+                if (pollFails >= 3) SwingUtilities.invokeLater(() -> toast("Reconnected to the campus server"));
+                pollFails = 0;
+                SwingUtilities.invokeLater(() -> applyRemote(st, fp, v));
+            } catch (Exception e) {
+                if (++pollFails == 3) SwingUtilities.invokeLater(() -> toast("Cannot reach the campus server - retrying..."));
+            } }, 5, 5, TimeUnit.SECONDS);
     }
 }

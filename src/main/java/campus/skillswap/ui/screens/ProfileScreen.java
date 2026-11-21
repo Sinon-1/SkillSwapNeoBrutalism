@@ -79,7 +79,7 @@ public class ProfileScreen {
     }
     /** Header buttons: edit profile details and change the public username. */
     static JPanel profileActions() {
-        JPanel a = row(); a.add(btn("Edit Profile", ProfileScreen::editProfile)); a.add(ghost("Change username", ProfileScreen::changeUsername)); return a;
+        JPanel a = row(); a.add(btn("Edit Profile", ProfileScreen::editProfile)); a.add(ghost("Set nickname", ProfileScreen::setNickname)); return a;
     }
     public static void changeUsername() {
         JTextField un = field(); un.setText(me.username); JPasswordField pw = pass();
@@ -98,6 +98,15 @@ public class ProfileScreen {
         me.passHash = hash(newName, new String(pw.getPassword()));
         renameUser(me.username, newName);
         show("Profile"); toast("Username changed to " + newName);
+    }
+    public static void setNickname() {
+        JTextField nm = field(); nm.setText(me.nickname != null ? me.nickname : ""); JPanel b = vbox();
+        put(b, labeled("Nickname", nm)); gap(b, 4);
+        put(b, lbl("Leave blank to use your normal name.", Font.PLAIN, 11, MUTED));
+        b.setPreferredSize(new Dimension(440, b.getPreferredSize().height));
+        if (!dialog("Set nickname", "Enter a nickname for group chats", YEL, b, "SAVE", () -> {
+            String n = nm.getText().trim(); return n.isEmpty() ? null : n.length() < 2 ? "Nickname must be at least 2 characters." : null; })) return;
+        me.nickname = nm.getText().trim(); saveEdit(); show("Profile"); toast("Nickname set to " + me.nickname);
     }
     public static JComponent skillRow(String title, List<String> list, Color col) {
         JPanel c = card(); c.add(lbl(title, Font.BOLD, 12, TXT), BorderLayout.NORTH); JPanel r = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); r.setOpaque(false);
@@ -132,7 +141,7 @@ public class ProfileScreen {
         final byte[][] photo = {me.photo};
         JTextArea bio = area(4, 26); bio.setText(me.bio);
         JCheckBox pub = check("Make my ratings public", me.publicRatings);
-        final JDialog dlg = new JDialog(frame, "Edit profile", true); final boolean[] saved = {false};
+        final JDialog dlg = new JDialog(frame, "Edit profile", true); iconify(dlg); final boolean[] saved = {false};
         JComponent av = avatarOf(name(me), 96, () -> photo[0]);
         JButton choose = btn("Choose photo...", null), remove = ghost("Remove", null); remove.setEnabled(photo[0] != null);
         JLabel msg = lbl("JPG or PNG. It is cropped to a square.", Font.PLAIN, 11, MUTED);
@@ -156,10 +165,32 @@ public class ProfileScreen {
         JPanel btns = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0)); btns.setOpaque(false); btns.add(choose); btns.add(remove); side.add(btns, c); c.gridy = 1; c.insets = new Insets(0, 0, 0, 0); side.add(msg, c);
         top.add(side, BorderLayout.CENTER); put(body, top); gap(body, 20);
         put(body, sectionTitle("ABOUT YOU")); gap(body, 8);
+        // Username change section
+        JTextField newUsername = field(); newUsername.setText(me.username);
+        JPasswordField pw = pass();
+        JPanel unPanel = new JPanel(new BorderLayout(6, 0)); unPanel.setOpaque(false);
+        unPanel.add(lbl("Username: " + me.username, Font.PLAIN, 11, MUTED), BorderLayout.NORTH);
+        unPanel.add(labeled("New username", newUsername), BorderLayout.CENTER);
+        JPanel pwPanel = new JPanel(new BorderLayout(6, 0)); pwPanel.setOpaque(false);
+        pwPanel.add(labeled("Current password (required to change username)", pw), BorderLayout.NORTH);
+        pwPanel.add(lbl("Leave username unchanged if you don't want to rename.", Font.PLAIN, 10, MUTED), BorderLayout.SOUTH);
+        JPanel unSection = new JPanel(new BorderLayout(6, 6)); unSection.setOpaque(false);
+        unSection.add(unPanel, BorderLayout.NORTH); unSection.add(pwPanel, BorderLayout.SOUTH);
+        put(body, unSection); gap(body, 14);
         JPanel fm = form(new String[]{"Bio / major"}, new JComponent[]{scroller(bio)}); put(body, fm); gap(body, 14);
         put(body, sectionTitle("PRIVACY")); gap(body, 6); JPanel pv = vbox(); pv.setOpaque(false); put(pv, pub); put(body, pv);
 
-        JButton save = btn("Save changes", () -> { saved[0] = true; dlg.dispose(); });
+        JButton save = btn("Save changes", null);
+        save.addActionListener(e -> {
+            String newName = newUsername.getText().trim();
+            if (!newName.equals(me.username)) {
+                if (newName.length() < 3) { info("Username must be at least 3 characters."); return; }
+                if (S.users.keySet().stream().anyMatch(x -> x.equalsIgnoreCase(newName))) { info("That username is already taken."); return; }
+                String pwStr = new String(pw.getPassword());
+                if (pwStr.isEmpty() || !me.passHash.equals(hash(me.username, pwStr))) { info("Current password is required and must be correct to change username."); return; }
+            }
+            saved[0] = true; dlg.dispose();
+        });
         JPanel foot = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0)); foot.setOpaque(false); foot.setBorder(new EmptyBorder(14, 24, 18, 24)); foot.add(ghost("Cancel", dlg::dispose)); foot.add(save);
         JPanel root = new JPanel(new BorderLayout()); root.setBackground(PANEL); root.add(body, BorderLayout.CENTER); root.add(foot, BorderLayout.SOUTH);
         dlg.setContentPane(root); dlg.getRootPane().setDefaultButton(save);
@@ -167,13 +198,20 @@ public class ProfileScreen {
         dlg.pack(); dlg.setSize(Math.max(520, dlg.getWidth()), dlg.getHeight()); dlg.setResizable(false); dlg.setLocationRelativeTo(frame);
         busy++; try { dlg.setVisible(true); } finally { busy--; }
         if (!saved[0]) return;
-        me.bio = bio.getText().trim(); me.publicRatings = pub.isSelected(); me.photo = photo[0]; save(); show("Profile"); toast("Profile updated");
+        me.bio = bio.getText().trim(); me.publicRatings = pub.isSelected(); me.photo = photo[0];
+        String newName = newUsername.getText().trim();
+        if (!newName.equals(me.username)) {
+            String pwStr = new String(pw.getPassword());
+            me.passHash = hash(newName, pwStr);
+            renameUser(me.username, newName);
+        }
+        save(); show("Profile"); toast("Profile updated");
     }
     /** Read-only profile card for another student, opened by clicking their avatar or name. */
     public static void profileDialog(User u) {
         if (u == null) return;
         stopInline();                                    // no video audio behind the profile card
-        JDialog d = new JDialog(frame, "Profile - " + name(u), true);
+        JDialog d = new JDialog(frame, "Profile - " + name(u), true); iconify(d);
         JPanel outer = new JPanel(new BorderLayout()); outer.setBackground(BG); outer.setBorder(new EmptyBorder(16, 16, 12, 12));
         JPanel card = new JPanel(new BorderLayout()); card.setBackground(PANEL); card.setBorder(new LineBorder(INK, BW));
 

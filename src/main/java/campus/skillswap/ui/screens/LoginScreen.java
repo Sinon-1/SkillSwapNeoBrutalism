@@ -137,7 +137,7 @@ public class LoginScreen {
      * {@code validate} runs when OK is pressed; a non-null result is shown inside the dialog (which stays open, so nothing typed is lost).
      */
     static boolean dialog(String title, String sub, Color band, JComponent body, String okText, java.util.function.Supplier<String> validate) {
-        JDialog d = new JDialog(frame, title, true); final boolean[] ok = {false};
+        JDialog d = new JDialog(frame, title, true); iconify(d); final boolean[] ok = {false};
         JPanel outer = new JPanel(new BorderLayout()); outer.setBackground(BG); outer.setBorder(new EmptyBorder(16, 16, 12, 12));
         Card card = new Card(); card.setLayout(new BorderLayout()); card.setBorder(new EmptyBorder(0, 0, 0, 0)); card.setBackground(PANEL);
         JPanel head = new JPanel(); head.setLayout(new BoxLayout(head, BoxLayout.Y_AXIS)); head.setBackground(band); head.setBorder(new CompoundBorder(new MatteBorder(0, 0, CB, 0, INK), new EmptyBorder(14, 24, 12, 24)));

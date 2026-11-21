@@ -72,6 +72,7 @@ skillswap/
 ├── database/schema.sql             Tables (incl. chat_groups, message_files) (the app also creates them automatically on first connect)
 ├── lib/postgresql-42.7.4.jar       JDBC driver for building without Maven
 ├── scripts/                        run-dev, package (installer), build-no-maven  (.sh and .bat)
+├── assets/                         Ready-made app logo: icon.ico, icon.png, icon-256.png, icon-1024.png
 ├── .env.example  .gitignore
 └── src/main/java/campus/skillswap/
     ├── Main.java                   Entry point
@@ -83,6 +84,7 @@ skillswap/
     ├── service/                    Stats (ratings, badges, matching), Skills (categories), Security (hashing)
     └── ui/
         ├── Theme, AppShell, Notifier       Look & feel, main window, toasts/tray/reminders
+        ├── IconExport.java         Renders app-icon.png into icon.ico/.png/iconset
         ├── screens/                Login, Connection, Feed, Search, Certs, Bookings, Nearby, Messages, Profile, Settings
         └── media/                  Videos, Reels, VideoPlayerFX (optional JavaFX player)
 ```
@@ -117,7 +119,17 @@ Demo accounts (password `demo`): ramos, alamag, henry, jeb, chinu, dino, jamesa,
    - macOS: `scripts/package.sh`  -> .dmg
    - Linux: `scripts/package.sh`  -> .deb
    The installer includes Java, so students install nothing else. Output is in `dist/`.
+   Both scripts render the app icon (`src/main/resources/campus/skillswap/app-icon.png`, the
+   speech-bubble mark) into `.ico`/`.icns`/`.png` for the installer, so the desktop shortcut,
+   Start menu entry, title bar and taskbar all show the SkillSwap logo instead of the generic
+   Java icon.
 3. Students install the app, enter the database details once, and sign in.
+
+The icon can be regenerated on its own with
+`java -cp target/classes campus.skillswap.ui.IconExport target/icon` (writes `icon-1024.png`,
+`icon.png`, `icon-256.png`, `icon.ico` and a macOS `icon.iconset/`). Ready-made copies live in `assets/` —
+if you already have an old desktop shortcut that still shows the Java cup, right-click it,
+choose **Properties > Change Icon** and pick `assets\icon.ico`.
 
 `mvn package` alone produces `target/skillswap-campus.jar` (run with `java -jar`).
 
@@ -135,6 +147,7 @@ Demo accounts (password `demo`): ramos, alamag, henry, jeb, chinu, dino, jamesa,
 Videos in any format (MKV, AVI, WebM, HEVC, odd MOV...) now play: the first time one is opened, SkillSwap converts it to
 MP4 (H.264 + AAC) in the background and keeps the result in `~/.skillswap/cache/play`. On Windows ffmpeg is downloaded
 automatically the first time it is needed (about 30 MB, once). On macOS / Linux install it first (`brew install ffmpeg` / `sudo apt install ffmpeg`).
+If the player rejects a file anyway, SkillSwap rebuilds it once (also cached) and retries before showing an error.
 
 ## Videos: automatic conversion on upload (optional)
 The in-app player only plays MP4 with H.264 video + AAC audio. Install ffmpeg once and SkillSwap converts every

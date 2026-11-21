@@ -25,7 +25,7 @@ public class CallWindow extends JFrame {
         stage = new JPanel() { protected void paintComponent(Graphics g0) { paintStage((Graphics2D) g0, getWidth(), getHeight()); } };
         stage.setPreferredSize(new Dimension(860, 560)); stage.setBackground(STAGE);
         bar.setBackground(BAR); bar.setBorder(new javax.swing.border.MatteBorder(3, 0, 0, 0, INK));
-        setLayout(new BorderLayout()); add(stage); add(bar, BorderLayout.SOUTH); pack(); setMinimumSize(new Dimension(520, 420));
+        setLayout(new BorderLayout()); add(stage); add(bar, BorderLayout.SOUTH); pack(); setMinimumSize(new Dimension(520, 420)); iconify(this);
         fxTimer = new javax.swing.Timer(33, e -> { if (fx.active()) stage.repaint(); }); fxTimer.start();     // animates floating emotes
     }
     @Override public void dispose() { fxTimer.stop(); super.dispose(); }

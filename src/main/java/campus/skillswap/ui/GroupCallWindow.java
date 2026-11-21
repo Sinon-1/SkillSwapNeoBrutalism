@@ -22,7 +22,7 @@ public class GroupCallWindow extends JFrame {
     /** One person in the call. */
     public static class Tile {
         public final String user, name; public final boolean me;
-        public volatile BufferedImage img, screen; public volatile boolean cam = true, mic = true, sharing; public volatile long speakUntil;
+        public volatile BufferedImage img, photo, screen; public volatile boolean cam = true, mic = true, sharing; public volatile long speakUntil;
         public Tile(String user, String name, boolean me) { this.user = user; this.name = name; this.me = me; }
     }
 
@@ -44,7 +44,7 @@ public class GroupCallWindow extends JFrame {
         stage = new JPanel() { protected void paintComponent(Graphics g0) { paintStage((Graphics2D) g0, getWidth(), getHeight()); } };
         stage.setPreferredSize(new Dimension(960, 600)); stage.setBackground(STAGE);
         bar.setBackground(BAR); bar.setBorder(new javax.swing.border.MatteBorder(3, 0, 0, 0, INK));
-        setLayout(new BorderLayout()); add(stage); add(bar, BorderLayout.SOUTH); pack(); setMinimumSize(new Dimension(660, 470));
+        setLayout(new BorderLayout()); add(stage); add(bar, BorderLayout.SOUTH); pack(); setMinimumSize(new Dimension(660, 470)); iconify(this);
         timer = new javax.swing.Timer(250, e -> stage.repaint()); timer.start();       // speaking highlight, clock, floating emotes
     }
     @Override public void dispose() { timer.stop(); super.dispose(); }
@@ -173,11 +173,16 @@ public class GroupCallWindow extends JFrame {
         rects.put(t.user, new Rectangle(x, y, w, h));
         boolean hand = hands.contains(t.user), speaking = t.mic && System.currentTimeMillis() < t.speakUntil;
         g.setColor(TILE); g.fillRect(x, y, w, h);
-        BufferedImage im = t.img;
-        if (im != null && t.cam) {
+        BufferedImage im = t.img, ph = t.photo;
+        if (t.cam && im != null) {
             double s = Math.max((double) w / im.getWidth(), (double) h / im.getHeight()); int iw = (int) Math.ceil(im.getWidth() * s), ih = (int) Math.ceil(im.getHeight() * s);
             Shape old = g.getClip(); g.setClip(x, y, w, h);
             if (t.me) g.drawImage(im, x + (w + iw) / 2, y + (h - ih) / 2, -iw, ih, null); else g.drawImage(im, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih, null);   // own picture mirrored, like a mirror
+            g.setClip(old);
+        } else if (ph != null) {
+            double s = Math.max((double) w / ph.getWidth(), (double) h / ph.getHeight()); int iw = (int) Math.ceil(ph.getWidth() * s), ih = (int) Math.ceil(ph.getHeight() * s);
+            Shape old = g.getClip(); g.setClip(x, y, w, h);
+            g.drawImage(ph, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih, null);
             g.setClip(old);
         } else {
             int d = Math.max(40, Math.min(120, Math.min(w, h) * 5 / 11)), cx = x + (w - d) / 2, cy = y + (h - d) / 2 - 8;

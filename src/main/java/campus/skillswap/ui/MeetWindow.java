@@ -33,7 +33,7 @@ public class MeetWindow extends JFrame {
         stage.setPreferredSize(new Dimension(980, 600)); stage.setBackground(STAGE);
         stage.addMouseListener(new MouseAdapter() { public void mouseClicked(MouseEvent e) { click(e.getX(), e.getY()); } });
         bar.setBackground(BAR); bar.setBorder(new javax.swing.border.MatteBorder(3, 0, 0, 0, INK));
-        setLayout(new BorderLayout()); add(stage); add(bar, BorderLayout.SOUTH); buildBar(); pack(); setMinimumSize(new Dimension(560, 440));
+        setLayout(new BorderLayout()); add(stage); add(bar, BorderLayout.SOUTH); buildBar(); pack(); setMinimumSize(new Dimension(560, 440)); iconify(this);
         anim = new javax.swing.Timer(400, e -> stage.repaint()); anim.start();          // lets the green "speaking" outline fade
     }
     @Override public void dispose() { anim.stop(); super.dispose(); }

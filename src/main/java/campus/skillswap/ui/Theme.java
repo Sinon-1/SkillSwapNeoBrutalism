@@ -1,5 +1,6 @@
 package campus.skillswap.ui;
 
+import javax.imageio.ImageIO;
 import javax.swing.*;
 import javax.swing.Timer;
 import javax.swing.border.*;
@@ -97,6 +98,76 @@ public class Theme {
     }
     public static Color leftBg() { return PANEL; }
     public static Color divider() { return INK; }
+
+    // ---------------- app icon ----------------
+    /** The SkillSwap mark (pink + green speech bubbles on a yellow card) lives in the jar as an image. */
+    private static final Map<Integer, BufferedImage> ICON_CACHE = new HashMap<>();
+    private static BufferedImage ICON_SRC;
+    private static boolean ICON_LOADED;
+    /** Multi-resolution SkillSwap mark for the title bar, taskbar and ALT-TAB. */
+    static List<Image> ICONS;
+    public static synchronized List<Image> appIcons() {
+        if (ICONS == null) {
+            int[] sizes = {16, 24, 32, 48, 64, 128, 256};
+            List<Image> out = new ArrayList<>(sizes.length);
+            for (int s : sizes) out.add(appIcon(s));
+            ICONS = Collections.unmodifiableList(out);
+        }
+        return ICONS;
+    }
+    /** Scaled copy of the icon artwork, cached per size. Halves first so 16-48 px stays crisp. */
+    public static synchronized BufferedImage appIcon(int s) {
+        BufferedImage cached = ICON_CACHE.get(s);
+        if (cached != null) return cached;
+        BufferedImage src = iconSource();
+        if (src == null) return drawnIcon(s);                  // bare classpath without the resource
+        BufferedImage at = src;
+        while (at.getWidth() / 2 >= s) at = resizeIcon(at, at.getWidth() / 2);
+        BufferedImage im = resizeIcon(at, s);
+        ICON_CACHE.put(s, im);
+        return im;
+    }
+    private static synchronized BufferedImage iconSource() {
+        if (!ICON_LOADED) {
+            ICON_LOADED = true;
+            try (InputStream in = Theme.class.getResourceAsStream("/campus/skillswap/app-icon.png")) {
+                if (in != null) ICON_SRC = ImageIO.read(in);
+            } catch (IOException ignored) { /* fall back to drawnIcon */ }
+        }
+        return ICON_SRC;
+    }
+    private static BufferedImage resizeIcon(BufferedImage src, int s) {
+        BufferedImage im = new BufferedImage(s, s, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = im.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION, RenderingHints.VALUE_ALPHA_INTERPOLATION_QUALITY);
+        g.drawImage(src, 0, 0, s, s, null); g.dispose(); return im;
+    }
+    /** Fallback mark used only when the icon resource is missing (for example a bare {@code -cp out}). */
+    private static BufferedImage drawnIcon(int s) {
+        BufferedImage im = new BufferedImage(s, s, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = im.createGraphics(); aa(g);
+        int sh = Math.max(1, Math.round(s * 0.07f));
+        int b = Math.max(1, Math.round(s * 0.085f));
+        int d = s - sh;
+        g.setColor(ONACC); g.fillRect(sh, sh, d, d);
+        g.setColor(PINK); g.fillRect(0, 0, d, d);
+        frame(g, 0, 0, d, d, b, ONACC);
+        g.setColor(ONACC); g.setFont(f(Font.BOLD, Math.max(7, Math.round(d * 0.62f))));
+        FontMetrics m = g.getFontMetrics();
+        g.drawString("S", (d - m.stringWidth("S")) / 2, (d - (m.getAscent() + m.getDescent())) / 2 + m.getAscent());
+        g.dispose(); return im;
+    }
+    /** Gives any Swing frame or dialog the SkillSwap icon (title bar, taskbar, ALT-TAB). */
+    public static void iconify(java.awt.Window w) {
+        try {
+            List<Image> i = appIcons();
+            if (w instanceof java.awt.Frame) ((java.awt.Frame) w).setIconImages(i);
+            else if (w instanceof java.awt.Dialog) ((java.awt.Dialog) w).setIconImages(i);
+            else w.setIconImage(appIcon(64));
+        } catch (Throwable t) { /* headless or unsupported: ignore */ }
+    }
 
     // ====================== UI HELPERS ======================
     public static Font f(int st, int sz) { return new Font("SansSerif", st, sz); }
@@ -456,6 +527,7 @@ public class Theme {
         if (action != null) { JPanel a = new JPanel(new GridBagLayout()); a.setOpaque(false); a.add(action); h.add(a, BorderLayout.EAST); }
         JPanel wrap = new JPanel(new BorderLayout()); wrap.setBackground(BG); wrap.setBorder(new EmptyBorder(16, 20, 20, 20)); wrap.add(p.body, BorderLayout.NORTH);
         JScrollPane sp = new JScrollPane(wrap, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER); sp.setBorder(null); sp.getViewport().setBackground(BG); sp.getVerticalScrollBar().setUnitIncrement(18);
+        sp.getViewport().setScrollMode(JViewport.SIMPLE_SCROLL_MODE);   // videos are embedded players: blitting left ghost copies behind
         p.scroll = sp; p.root.add(h, BorderLayout.NORTH); p.root.add(sp, BorderLayout.CENTER); return p;
     }
     public static Color catColor(String c) {

@@ -81,20 +81,29 @@ public class AppShell {
         statusBar = lbl(" ", Font.BOLD, 11, TXT); statusBar.setBorder(new EmptyBorder(5, 12, 5, 12)); JPanel sb = new JPanel(new BorderLayout()); sb.setBackground(YEL); sb.setBorder(new MatteBorder(CB, 0, 0, 0, INK)); statusBar.setForeground(ONACC); sb.add(statusBar);
         p.add(sidebar, BorderLayout.WEST); p.add(content, BorderLayout.CENTER); p.add(rightScroll, BorderLayout.EAST); p.add(sb, BorderLayout.SOUTH); return p;
     }
+    static JComponent errorPage(Throwable e) {
+        JPanel p = card(); p.add(lbl("Page error", Font.BOLD, 16, TXT), BorderLayout.NORTH);
+        p.add(lbl("<html><body style='width:340px'>" + esc(String.valueOf(e)) + "</body></html>", Font.PLAIN, 11, TXT), BorderLayout.CENTER);
+        p.add(wide(ghost("Reload Page", () -> show(page))), BorderLayout.SOUTH); return p;
+    }
     public static void show(String pgName) {
         if (me != null && me.moderator) pgName = "Moderation";
         stopInline(); page = pgName; content.removeAll();
         JComponent c;
-        switch (pgName) {
-            case "Search": c = searchPage(); break; case "Certs": c = certsPage(); break; case "Bookings": c = bookingsPage(); break;
-            case "Nearby": c = nearbyPage(); break; case "Messages": c = messagesPage(); break; case "Moderation": c = moderationPage(); break; case "Profile": c = profilePage(); break;
-            case "Settings": c = settingsPage(); break; default: c = feedPage();
-        }
+        try {
+            switch (pgName) {
+                case "Search": c = searchPage(); break; case "Certs": c = certsPage(); break; case "Bookings": c = bookingsPage(); break;
+                case "Nearby": c = nearbyPage(); break; case "Messages": c = messagesPage(); break; case "Moderation": c = moderationPage(); break; case "Profile": c = profilePage(); break;
+                case "Settings": c = settingsPage(); break; default: c = feedPage();
+            }
+        } catch (Throwable e) { e.printStackTrace(); toast("Page error: " + e.getMessage()); c = errorPage(e); }
         content.add(c); content.revalidate(); content.repaint(); markNavSeen(pgName); buildSidebar();
         boolean side = !(pgName.equals("Messages") || pgName.equals("Settings") || pgName.equals("Moderation"));   // these use the full width
         rightScroll.setVisible(side); if (side) buildRight(); rightScroll.getParent().revalidate();
-        if (me.moderator) statusBar.setText(netText() + "   |   Moderator: " + name(me) + "   |   Open reports: " + S.reports.stream().filter(r -> !r.resolved).count() + "   |   Last online sync: " + S.lastSync);
-        else statusBar.setText(netText() + "   |   Signed in as " + name(me) + "   |   Credits: " + me.credits + "/" + MAX_CREDITS + "   |   Last online sync: " + S.lastSync);
+        try {
+            if (me.moderator) statusBar.setText(netText() + "   |   Moderator: " + name(me) + "   |   Open reports: " + S.reports.stream().filter(r -> !r.resolved).count() + "   |   Last online sync: " + S.lastSync);
+            else statusBar.setText(netText() + "   |   Signed in as " + name(me) + "   |   Credits: " + me.credits + "/" + MAX_CREDITS + "   |   Last online sync: " + S.lastSync);
+        } catch (Throwable ignored) { /* status text is not worth breaking a page over */ }
     }
     static void logout() {
         stopInline(); closeReels(); campus.skillswap.service.Calls.shutdown(); campus.skillswap.service.Presence.goOffline(); save(); me = null; rootCards.show(root, "login");
@@ -109,13 +118,13 @@ public class AppShell {
         info("Your account has been banned by a campus moderator." + (why.isEmpty() ? "" : "\n\nReason: " + why));
         return false;
     }
-    /** Logo mark: yellow square, ink border, hard shadow, bold "S". */
+    /** Logo mark from the same drawing used for the window/taskbar/installer icon, so brand art cannot drift. */
     static JComponent logoMark(int sz) {
         return new JComponent() {
             { Dimension d = new Dimension(sz, sz); setPreferredSize(d); setMinimumSize(d); setMaximumSize(d); }
             protected void paintComponent(Graphics g0) {
-                Graphics2D g = (Graphics2D) g0; aa(g); int d = sz - 4; g.setColor(INK); g.fillRect(4, 4, d, d); g.setColor(PINK); g.fillRect(0, 0, d, d); frame(g, 0, 0, d, d, 3, INK);
-                g.setColor(ONACC); g.setFont(f(Font.BOLD, d - 8)); FontMetrics m = g.getFontMetrics(); g.drawString("S", (d - m.stringWidth("S")) / 2, (d + m.getAscent() - m.getDescent()) / 2);
+                Graphics2D g = (Graphics2D) g0.create(); aa(g);
+                g.drawImage(appIcon(sz), 0, 0, null); g.dispose();
             }
         };
     }

@@ -5,6 +5,7 @@
 set -e
 cd "$(dirname "$0")/.."
 rm -rf out && mkdir out
+if [ -d src/main/resources ]; then cp -R src/main/resources/. out/; fi
 if [ -d lib/javafx-sdk/lib ]; then
   FX="--module-path lib/javafx-sdk/lib --add-modules javafx.media,javafx.swing"
   find src -name "*.java" > out/sources.txt
